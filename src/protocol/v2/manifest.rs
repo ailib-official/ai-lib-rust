@@ -255,6 +255,8 @@ pub struct MultimodalOutput {
     pub audio: Option<AudioOutputConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageOutputConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoOutputConfig>,
 }
 
 /// Audio output configuration.
@@ -277,6 +279,19 @@ pub struct ImageOutputConfig {
     pub supported: bool,
     #[serde(default)]
     pub formats: Vec<String>,
+}
+
+/// Video generation output configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VideoOutputConfig {
+    #[serde(default)]
+    pub supported: bool,
+    #[serde(default)]
+    pub formats: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_duration: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_resolution: Option<String>,
 }
 
 /// Omni-mode configuration.

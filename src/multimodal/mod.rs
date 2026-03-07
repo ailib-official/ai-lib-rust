@@ -105,6 +105,14 @@ impl MultimodalCapabilities {
                     output_modalities.insert(Modality::Image);
                 }
             }
+            if let Some(video_out) = &output.video {
+                if video_out.supported {
+                    output_modalities.insert(Modality::Video);
+                    if video_formats.is_empty() {
+                        video_formats = video_out.formats.clone();
+                    }
+                }
+            }
         }
 
         let supports_omni = config
@@ -236,6 +244,12 @@ mod tests {
                     voice_selection: true,
                 }),
                 image: None,
+                video: Some(VideoOutputConfig {
+                    supported: true,
+                    formats: vec!["mp4".into()],
+                    max_duration: None,
+                    max_resolution: None,
+                }),
             }),
             omni_mode: None,
         }
@@ -250,6 +264,7 @@ mod tests {
         assert!(!caps.supports_input(Modality::Video));
         assert!(caps.supports_output(Modality::Audio));
         assert!(!caps.supports_output(Modality::Image));
+        assert!(caps.supports_output(Modality::Video));
     }
 
     #[test]

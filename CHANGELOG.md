@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.9.0 - 2026-03-07
+
+### Added
+
+- Cross-repo generative manifest consumption regression test: `tests/generative_manifest_consumption.rs` validates loading and capability usage against latest `ai-protocol/v2/providers/*.yaml` (Google, DeepSeek, Qwen, Doubao).
+- V2 manifest type support for `multimodal.output.video` via `VideoOutputConfig`.
+
+### Changed
+
+- Multimodal capability extraction now respects `output.video` declarations and propagates video output support where declared.
+
 ## 0.8.6 - 2026-02-28
 
 ### Added
