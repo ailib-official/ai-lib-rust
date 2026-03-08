@@ -91,3 +91,63 @@ capabilities:
     assert_eq!(manifest.chat_path(), "/v2/chat");
     assert_eq!(manifest.base_url(), "https://example.com");
 }
+
+#[test]
+fn consume_wave1_v2_provider_manifests() {
+    let root = resolve_ai_protocol_root();
+    let providers = ["cohere", "moonshot", "zhipu", "jina"];
+
+    for provider in providers {
+        let path = root.join(format!("v2/providers/{provider}.yaml"));
+        let raw = fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!("failed reading {}: {e}", path.display());
+        });
+        let manifest: ManifestV2 = serde_yaml::from_str(&raw).unwrap_or_else(|e| {
+            panic!("failed parsing {}: {e}", path.display());
+        });
+
+        assert!(manifest.is_v2(), "{provider} should be parsed as V2");
+        assert_eq!(manifest.id, provider);
+        assert!(!manifest.base_url().is_empty(), "{provider} should expose base_url");
+
+        let chat_path = manifest.endpoint.chat.as_ref().map(|p| p.as_path());
+        let rerank_path = manifest.endpoint.rerank.as_ref().map(|p| p.as_path());
+
+        match provider {
+            "cohere" => {
+                assert_eq!(chat_path, Some("/chat"));
+                assert_eq!(rerank_path, Some("/rerank"));
+            }
+            "moonshot" | "zhipu" => {
+                assert_eq!(chat_path, Some("/chat/completions"));
+            }
+            "jina" => {
+                assert!(chat_path.is_none(), "jina should not expose chat path");
+                assert_eq!(rerank_path, Some("/v1/rerank"));
+            }
+            _ => unreachable!(),
+        }
+
+        if provider == "moonshot" {
+            let multimodal = manifest
+                .multimodal
+                .as_ref()
+                .expect("moonshot should expose multimodal section");
+            let caps = MultimodalCapabilities::from_config(multimodal);
+            assert!(
+                caps.supports_input(Modality::Video),
+                "moonshot should support video input"
+            );
+            let output_video_supported = multimodal
+                .output
+                .as_ref()
+                .and_then(|o| o.video.as_ref())
+                .map(|v| v.supported)
+                .unwrap_or(false);
+            assert!(
+                !output_video_supported,
+                "moonshot output.video should remain disabled in current contract"
+            );
+        }
+    }
+}
