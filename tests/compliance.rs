@@ -709,6 +709,177 @@ fn run_tool_accumulation(tc: &TestCase) -> Result<(), Vec<String>> {
     if failures.is_empty() { Ok(()) } else { Err(failures) }
 }
 
+fn run_capability_guard(tc: &TestCase) -> Result<(), Vec<String>> {
+    let mut failures = Vec::new();
+    let method = tc
+        .input
+        .extra
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let manifest_raw = tc
+        .input
+        .extra
+        .get("manifest")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let manifest: Value = serde_yaml::from_str(manifest_raw).unwrap_or(Value::Null);
+    let cap_key = match method {
+        "MCPListTools" => "mcp",
+        "ComputerUse" => "computer_use",
+        "Reason" => "reasoning",
+        "VideoGenerate" => "video",
+        _ => "",
+    };
+    let has_cap = if let Some(caps) = manifest.get("capabilities") {
+        if let Some(seq) = caps.as_sequence() {
+            seq.iter().any(|v| v.as_str() == Some(cap_key))
+        } else if let Some(map) = caps.as_mapping() {
+            map.contains_key(&Value::String(cap_key.to_string()))
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let actual = if !has_cap { "E1005" } else { "" };
+    let expected = tc.expected.error_code.as_deref().unwrap_or("");
+    if actual != expected {
+        failures.push(format!("error_code: expected {}, got {}", expected, actual));
+    }
+    if failures.is_empty() { Ok(()) } else { Err(failures) }
+}
+
+fn run_advanced_endpoint_mapping(tc: &TestCase) -> Result<(), Vec<String>> {
+    let mut failures = Vec::new();
+    let operation = tc
+        .input
+        .extra
+        .get("operation")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let fallback = tc
+        .input
+        .extra
+        .get("fallback")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let manifest_raw = tc
+        .input
+        .extra
+        .get("manifest")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let manifest: Value = serde_yaml::from_str(manifest_raw).unwrap_or(Value::Null);
+    let mut path = fallback.to_string();
+    let mut method = "POST".to_string();
+    if let Some(op) = manifest
+        .get("core")
+        .and_then(|v| v.get("endpoint"))
+        .and_then(|v| v.get("endpoints"))
+        .and_then(|v| v.get(operation))
+    {
+        if let Some(p) = op.get("path").and_then(Value::as_str) {
+            path = p.to_string();
+        }
+        if let Some(m) = op.get("method").and_then(Value::as_str) {
+            method = m.to_uppercase();
+        }
+    }
+    let expected_path = tc
+        .expected
+        .extra
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let expected_method = tc
+        .expected
+        .extra
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !expected_path.is_empty() && path != expected_path {
+        failures.push(format!("path: expected {}, got {}", expected_path, path));
+    }
+    if !expected_method.is_empty() && method != expected_method {
+        failures.push(format!("method: expected {}, got {}", expected_method, method));
+    }
+    if failures.is_empty() { Ok(()) } else { Err(failures) }
+}
+
+fn run_fallback_decision(tc: &TestCase) -> Result<(), Vec<String>> {
+    let mut failures = Vec::new();
+    let code = tc
+        .input
+        .extra
+        .get("error_code")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let should = matches!(code, "E1002" | "E2001" | "E2002" | "E3001" | "E3002" | "E3003");
+    let expected = tc
+        .expected
+        .extra
+        .get("should_fallback")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if should != expected {
+        failures.push(format!("should_fallback: expected {}, got {}", expected, should));
+    }
+    if failures.is_empty() { Ok(()) } else { Err(failures) }
+}
+
+fn run_provider_mock_behavior(tc: &TestCase) -> Result<(), Vec<String>> {
+    let mut failures = Vec::new();
+    let req = tc
+        .input
+        .extra
+        .get("request_body")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let resp = tc
+        .input
+        .response_body
+        .clone()
+        .or_else(|| tc.input.extra.get("response_body").cloned())
+        .unwrap_or(Value::Null);
+    if let Some(asserts) = tc.expected.extra.get("request_assert").and_then(Value::as_mapping) {
+        for (k, v) in asserts {
+            let path = k.as_str().unwrap_or_default();
+            let got = value_at_path(&req, path);
+            if got != Some(v) {
+                failures.push(format!("request_assert {}: expected {:?}, got {:?}", path, v, got));
+            }
+        }
+    }
+    if let Some(asserts) = tc.expected.extra.get("response_assert").and_then(Value::as_mapping) {
+        for (k, v) in asserts {
+            let path = k.as_str().unwrap_or_default();
+            let got = value_at_path(&resp, path);
+            if got != Some(v) {
+                failures.push(format!("response_assert {}: expected {:?}, got {:?}", path, v, got));
+            }
+        }
+    }
+    if failures.is_empty() { Ok(()) } else { Err(failures) }
+}
+
+fn value_at_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut cur = root;
+    for part in path.split('.') {
+        match cur {
+            Value::Mapping(m) => {
+                cur = m.get(&Value::String(part.to_string()))?;
+            }
+            Value::Sequence(s) => {
+                let idx: usize = part.parse().ok()?;
+                cur = s.get(idx)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(cur)
+}
+
 #[test]
 fn compliance_error_classification() {
     let compliance_dir = compliance_dir();
@@ -920,6 +1091,7 @@ fn compliance_message_stream_request_cases() {
         compliance_dir.join("cases/03-message-building"),
         compliance_dir.join("cases/04-streaming"),
         compliance_dir.join("cases/05-request-building"),
+        compliance_dir.join("cases/07-advanced-capabilities"),
     ];
 
     let mut passed = 0u32;
@@ -946,6 +1118,10 @@ fn compliance_message_stream_request_cases() {
                     "stream_decode" => run_stream_decode(&tc),
                     "event_mapping" => run_event_mapping(&tc),
                     "tool_accumulation" => run_tool_accumulation(&tc),
+                    "capability_guard" => run_capability_guard(&tc),
+                    "advanced_endpoint_mapping" => run_advanced_endpoint_mapping(&tc),
+                    "fallback_decision" => run_fallback_decision(&tc),
+                    "provider_mock_behavior" => run_provider_mock_behavior(&tc),
                     _ => continue,
                 };
                 match result {
