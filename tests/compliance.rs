@@ -225,7 +225,7 @@ fn manifest_has_required_shape(manifest: &Value) -> bool {
     id_ok && pv_ok && endpoint_ok
 }
 
-fn ios_capability_profile_errors(manifest: &Value) -> Vec<String> {
+fn capability_profile_phase_errors(manifest: &Value) -> Vec<String> {
     let Some(cp) = manifest.get("capability_profile") else {
         return Vec::new();
     };
@@ -238,22 +238,36 @@ fn ios_capability_profile_errors(manifest: &Value) -> Vec<String> {
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    if phase != "ios_v1" {
-        return Vec::new();
-    }
-
     let mut errors = Vec::new();
-    if cp_map.contains_key(&Value::String("process".to_string()))
-        || cp_map.contains_key(&Value::String("contract".to_string()))
-    {
-        errors.push("must NOT have additional properties".to_string());
-    }
+    let has_ios_keys = || {
+        cp_map.contains_key(&Value::String("inputs".to_string()))
+            || cp_map.contains_key(&Value::String("outcomes".to_string()))
+            || cp_map.contains_key(&Value::String("systems".to_string()))
+    };
 
-    let has_ios_keys = cp_map.contains_key(&Value::String("inputs".to_string()))
-        || cp_map.contains_key(&Value::String("outcomes".to_string()))
-        || cp_map.contains_key(&Value::String("systems".to_string()));
-    if !has_ios_keys {
-        errors.push("must match at least one schema in anyOf".to_string());
+    match phase {
+        "ios_v1" => {
+            if cp_map.contains_key(&Value::String("process".to_string()))
+                || cp_map.contains_key(&Value::String("contract".to_string()))
+            {
+                errors.push("must NOT have additional properties".to_string());
+            }
+            if !has_ios_keys() {
+                errors.push("must match at least one schema in anyOf".to_string());
+            }
+        }
+        "iospc_v1" => {
+            if !has_ios_keys() {
+                errors.push("iospc_v1 requires inputs or outcomes or systems".to_string());
+            }
+            if !cp_map.contains_key(&Value::String("process".to_string()))
+                && !cp_map.contains_key(&Value::String("contract".to_string()))
+            {
+                errors.push("iospc_v1 requires process or contract".to_string());
+            }
+        }
+        "" => {}
+        _ => errors.push("phase must be ios_v1 or iospc_v1".to_string()),
     }
 
     errors
@@ -276,8 +290,8 @@ fn run_protocol_loading(tc: &TestCase, compliance_dir: &Path) -> Result<(), Vec<
     let manifest: Value = serde_yaml::from_str(&raw)
         .map_err(|e| vec![format!("failed to parse manifest {}: {}", manifest_path.display(), e)])?;
 
-    let ios_errors = ios_capability_profile_errors(&manifest);
-    let actual_valid = manifest_has_required_shape(&manifest) && ios_errors.is_empty();
+    let cp_errors = capability_profile_phase_errors(&manifest);
+    let actual_valid = manifest_has_required_shape(&manifest) && cp_errors.is_empty();
     let expected_valid = tc.expected.valid.unwrap_or(false);
     if actual_valid != expected_valid {
         failures.push(format!(
@@ -287,7 +301,7 @@ fn run_protocol_loading(tc: &TestCase, compliance_dir: &Path) -> Result<(), Vec<
     }
 
     if let Some(expected_errors) = tc.expected.errors.as_ref().and_then(Value::as_sequence) {
-        let actual_error_text = ios_errors.join(" | ");
+        let actual_error_text = cp_errors.join(" | ");
         for expected in expected_errors {
             if let Some(expected_text) = expected.as_str() {
                 if !actual_error_text.contains(expected_text) {
