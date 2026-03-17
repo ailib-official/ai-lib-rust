@@ -110,6 +110,10 @@ impl ProtocolLoader {
 
         // 1. Check user-configured base_path
         if let Some(ref base_path) = self.base_path {
+            // Priority 0: dist/v2/providers/{id}.json
+            search_locations.push((base_path.join("dist").join("v2").join("providers"), true));
+            // Priority 0b: v2/providers/{id}.yaml
+            search_locations.push((base_path.join("v2").join("providers"), false));
             // Priority 1: dist/v1/providers/{id}.json
             search_locations.push((base_path.join("dist").join("v1").join("providers"), true));
             // Priority 2: v1/providers/{id}.yaml
@@ -145,6 +149,8 @@ impl ProtocolLoader {
             } else {
                 // Local Path from Env
                 let root = PathBuf::from(root);
+                search_locations.push((root.join("dist").join("v2").join("providers"), true));
+                search_locations.push((root.join("v2").join("providers"), false));
                 search_locations.push((root.join("dist").join("v1").join("providers"), true));
                 search_locations.push((root.join("v1").join("providers"), false));
             }
@@ -159,6 +165,8 @@ impl ProtocolLoader {
         ];
 
         for root in default_roots {
+            search_locations.push((root.join("dist").join("v2").join("providers"), true));
+            search_locations.push((root.join("v2").join("providers"), false));
             search_locations.push((root.join("dist").join("v1").join("providers"), true));
             search_locations.push((root.join("v1").join("providers"), false));
         }
@@ -178,7 +186,16 @@ impl ProtocolLoader {
             }
         }
 
-        // Last resort: try GitHub raw URL (canonical source) - JSON
+        // Last resort: try GitHub raw URL (canonical source) - JSON (v2 first)
+        let github_json_v2 = format!(
+            "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/dist/v2/providers/{}.json",
+            provider_id
+        );
+        if let Ok(manifest) = self.load_from_json_url(&github_json_v2).await {
+            return Ok(manifest);
+        }
+
+        // Last resort fallback: v1 JSON
         let github_json = format!(
             "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/dist/v1/providers/{}.json",
             provider_id
