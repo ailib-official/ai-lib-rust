@@ -107,3 +107,94 @@ async fn test_all_providers_valid() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_loader_prefers_v2_provider_over_v1() {
+    let temp_root = std::env::temp_dir().join(format!(
+        "ai-lib-rust-protocol-prefers-v2-{}",
+        std::process::id()
+    ));
+    let dst_v2 = temp_root
+        .join("dist")
+        .join("v2")
+        .join("providers")
+        .join("openai.json");
+    let dst_v1 = temp_root
+        .join("dist")
+        .join("v1")
+        .join("providers")
+        .join("openai.json");
+    std::fs::create_dir_all(dst_v2.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(dst_v1.parent().unwrap()).unwrap();
+    std::fs::write(
+        &dst_v2,
+        r#"{
+  "id":"openai",
+  "protocol_version":"2.0",
+  "status":"stable",
+  "category":"ai_provider",
+  "official_url":"https://example.com",
+  "support_contact":"https://example.com/support",
+  "endpoint":{"base_url":"https://v2.example.com"},
+  "error_classification":{"by_http_status":{"429":"rate_limited"}},
+  "capabilities":{"required":["text","streaming","tools"],"optional":[]},
+  "capability_profile":{"phase":"ios_v1","inputs":{"modalities":["text"]}}
+}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &dst_v1,
+        r#"{
+  "id":"openai",
+  "protocol_version":"1.5",
+  "status":"stable",
+  "category":"ai_provider",
+  "official_url":"https://example.com",
+  "support_contact":"https://example.com/support",
+  "endpoint":{"base_url":"https://v1.example.com"},
+  "error_classification":{"by_http_status":{"429":"rate_limited"}},
+  "capabilities":{"streaming":true,"tools":true,"vision":false}
+}"#,
+    )
+    .unwrap();
+
+    let loader = ProtocolLoader::new().with_base_path(&temp_root);
+    let manifest = loader.load_provider("openai").await.unwrap();
+    assert_eq!(manifest.protocol_version, "2.0");
+    assert!(manifest.capability_profile.is_some());
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+}
+
+#[tokio::test]
+async fn test_loader_falls_back_to_v1_when_v2_missing() {
+    let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
+        .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
+        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+    let src_v1 = std::path::Path::new(&protocol_dir)
+        .join("dist")
+        .join("v1")
+        .join("providers")
+        .join("openai.json");
+    if !src_v1.exists() {
+        return;
+    }
+
+    let temp_root = std::env::temp_dir().join(format!(
+        "ai-lib-rust-protocol-fallback-v1-{}",
+        std::process::id()
+    ));
+    let dst_v1 = temp_root
+        .join("dist")
+        .join("v1")
+        .join("providers")
+        .join("openai.json");
+    std::fs::create_dir_all(dst_v1.parent().unwrap()).unwrap();
+    std::fs::copy(&src_v1, &dst_v1).unwrap();
+
+    let loader = ProtocolLoader::new().with_base_path(&temp_root);
+    let manifest = loader.load_provider("openai").await.unwrap();
+    assert_eq!(manifest.protocol_version, "1.5");
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+}

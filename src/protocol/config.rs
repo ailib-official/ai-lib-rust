@@ -85,9 +85,8 @@ fn default_method_get() -> String {
     "GET".to_string()
 }
 
-/// Capabilities object format (v1.1+)
-/// Required fields: streaming, tools, vision
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Capabilities object format (v1.1+ legacy + v2 required/optional shape)
+#[derive(Debug, Clone, Serialize)]
 pub struct Capabilities {
     pub streaming: bool,
     pub tools: bool,
@@ -102,6 +101,81 @@ pub struct Capabilities {
     pub multimodal: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub audio: bool,
+}
+
+impl<'de> Deserialize<'de> for Capabilities {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct LegacyCaps {
+            streaming: bool,
+            tools: bool,
+            vision: bool,
+            #[serde(default)]
+            agentic: bool,
+            #[serde(default)]
+            parallel_tools: bool,
+            #[serde(default)]
+            reasoning: bool,
+            #[serde(default)]
+            multimodal: bool,
+            #[serde(default)]
+            audio: bool,
+        }
+
+        #[derive(Deserialize, Default)]
+        struct FeatureFlags {
+            #[serde(default)]
+            parallel_tool_calls: bool,
+            #[serde(default)]
+            extended_thinking: bool,
+        }
+
+        #[derive(Deserialize)]
+        struct V2Caps {
+            required: Vec<String>,
+            #[serde(default)]
+            optional: Vec<String>,
+            #[serde(default)]
+            feature_flags: Option<FeatureFlags>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Input {
+            Legacy(LegacyCaps),
+            V2(V2Caps),
+        }
+
+        match Input::deserialize(deserializer)? {
+            Input::Legacy(v) => Ok(Capabilities {
+                streaming: v.streaming,
+                tools: v.tools,
+                vision: v.vision,
+                agentic: v.agentic,
+                parallel_tools: v.parallel_tools,
+                reasoning: v.reasoning,
+                multimodal: v.multimodal,
+                audio: v.audio,
+            }),
+            Input::V2(v) => {
+                let has = |name: &str| v.required.iter().any(|c| c == name) || v.optional.iter().any(|c| c == name);
+                let flags = v.feature_flags.unwrap_or_default();
+                Ok(Capabilities {
+                    streaming: has("streaming"),
+                    tools: has("tools"),
+                    vision: has("vision"),
+                    agentic: has("agentic"),
+                    parallel_tools: has("parallel_tools") || flags.parallel_tool_calls,
+                    reasoning: has("reasoning") || flags.extended_thinking,
+                    multimodal: has("vision") || has("audio") || has("video"),
+                    audio: has("audio"),
+                })
+            }
+        }
+    }
 }
 
 fn is_false(b: &bool) -> bool {

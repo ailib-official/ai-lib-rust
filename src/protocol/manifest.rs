@@ -22,7 +22,8 @@ pub struct ProtocolManifest {
     pub id: String,
     pub protocol_version: String,
     pub endpoint: EndpointDefinition,
-    pub availability: AvailabilityConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability: Option<AvailabilityConfig>,
     pub capabilities: Capabilities,
 
     // Provider metadata (required in manifests)
@@ -38,9 +39,11 @@ pub struct ProtocolManifest {
     pub support_contact: String,
 
     // Auth and configuration
-    pub auth: AuthConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payload_format: Option<String>,
+    #[serde(default)]
     pub parameter_mappings: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<String>,
