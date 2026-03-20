@@ -12,7 +12,7 @@ use ai_lib_rust::types::message::{Message, MessageContent, MessageRole};
 use ai_lib_rust::types::tool::ToolDefinition;
 
 const SAMPLE_PROTOCOL_JSON: &str = r#"{
-  "$schema": "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/schemas/v1.json",
+  "$schema": "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/schemas/v1.json",
   "id": "benchmark-provider",
   "protocol_version": "1.5",
   "name": "Benchmark Provider",

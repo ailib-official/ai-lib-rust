@@ -1,6 +1,6 @@
 # Architecture: ai-lib-rust (AI-Protocol Runtime)
 
-This document describes the **runtime-first** architecture of `ai-lib-rust`, a protocol-driven Rust implementation for [AI-Protocol](https://github.com/hiddenpath/ai-protocol).
+This document describes the **runtime-first** architecture of `ai-lib-rust`, a protocol-driven Rust implementation for [AI-Protocol](https://github.com/ailib-official/ai-protocol).
 
 Core principle:
 

@@ -12,7 +12,7 @@ impl ProtocolValidator {
     /// Standard GitHub URL for the official AI-Protocol schema.
     /// This is the canonical source of truth for schema validation.
     const SCHEMA_GITHUB_URL: &'static str =
-        "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/schemas/v1.json";
+        "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/schemas/v1.json";
 
     /// Create a new validator with the v1 schema.
     ///

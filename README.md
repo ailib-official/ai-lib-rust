@@ -2,7 +2,7 @@
 
 **Protocol Runtime for AI-Protocol** - A high-performance Rust reference implementation.
 
-`ai-lib-rust` is the Rust runtime implementation for the [AI-Protocol](https://github.com/hiddenpath/ai-protocol) specification. It embodies the core design principle: **一切逻辑皆算子，一切配置皆协议** (All logic is operators, all configuration is protocol).
+`ai-lib-rust` is the Rust runtime implementation for the [AI-Protocol](https://github.com/ailib-official/ai-protocol) specification. It embodies the core design principle: **一切逻辑皆算子，一切配置皆协议** (All logic is operators, all configuration is protocol).
 
 ## 🎯 Design Philosophy
 
@@ -71,11 +71,11 @@ cargo test --test compliance
 COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test --test compliance
 ```
 
-For details, see [CROSS_RUNTIME.md](https://github.com/hiddenpath/ai-protocol/blob/main/docs/CROSS_RUNTIME.md).
+For details, see [CROSS_RUNTIME.md](https://github.com/ailib-official/ai-protocol/blob/main/docs/CROSS_RUNTIME.md).
 
 ### Testing with ai-protocol-mock
 
-For integration and MCP tests without real API calls, use [ai-protocol-mock](https://github.com/hiddenpath/ai-protocol-mock):
+For integration and MCP tests without real API calls, use [ai-protocol-mock](https://github.com/ailib-official/ai-protocol-mock):
 
 ```bash
 # Start mock server (from ai-protocol-mock repo)
@@ -525,8 +525,8 @@ at your option.
 
 ## 🔗 Related Projects
 
-- [AI-Protocol](https://github.com/hiddenpath/ai-protocol): Protocol specification (v1.5 / V2)
-- [ai-lib-python](https://github.com/hiddenpath/ai-lib-python): Python runtime implementation
+- [AI-Protocol](https://github.com/ailib-official/ai-protocol): Protocol specification (v1.5 / V2)
+- [ai-lib-python](https://github.com/ailib-official/ai-lib-python): Python runtime implementation
 
 ---
 

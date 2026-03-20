@@ -2,7 +2,7 @@
 
 **AI-Protocol 协议运行时** - 高性能 Rust 参考实现
 
-`ai-lib-rust` 是 [AI-Protocol](https://github.com/hiddenpath/ai-protocol) 规范的 Rust 运行时实现。它体现了核心设计原则：**一切逻辑皆算子，一切配置皆协议** (All logic is operators, all configuration is protocol)。
+`ai-lib-rust` 是 [AI-Protocol](https://github.com/ailib-official/ai-protocol) 规范的 Rust 运行时实现。它体现了核心设计原则：**一切逻辑皆算子，一切配置皆协议** (All logic is operators, all configuration is protocol)。
 
 ## 🎯 设计哲学
 
@@ -71,11 +71,11 @@ cargo test --test compliance
 COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test --test compliance
 ```
 
-详细信息请参阅 [CROSS_RUNTIME.md](https://github.com/hiddenpath/ai-protocol/blob/main/docs/CROSS_RUNTIME.md)。
+详细信息请参阅 [CROSS_RUNTIME.md](https://github.com/ailib-official/ai-protocol/blob/main/docs/CROSS_RUNTIME.md)。
 
 ### 使用 ai-protocol-mock 进行测试
 
-在无需真实 API 调用的集成和 MCP 测试中，可使用 [ai-protocol-mock](https://github.com/hiddenpath/ai-protocol-mock)：
+在无需真实 API 调用的集成和 MCP 测试中，可使用 [ai-protocol-mock](https://github.com/ailib-official/ai-protocol-mock)：
 
 ```bash
 # 启动 mock 服务（在 ai-protocol-mock 仓库中）
@@ -527,8 +527,8 @@ let results = client.chat_batch_smart(reqs).await;
 
 ## 🔗 相关项目
 
-- [AI-Protocol](https://github.com/hiddenpath/ai-protocol): 协议规范（v1.5 / V2）
-- [ai-lib-python](https://github.com/hiddenpath/ai-lib-python): Python 运行时实现
+- [AI-Protocol](https://github.com/ailib-official/ai-protocol): 协议规范（v1.5 / V2）
+- [ai-lib-python](https://github.com/ailib-official/ai-lib-python): Python 运行时实现
 
 ---
 

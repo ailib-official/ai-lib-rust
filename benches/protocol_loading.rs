@@ -10,7 +10,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 /// Sample protocol YAML for benchmarking
 const SAMPLE_PROTOCOL_YAML: &str = r#"
-$schema: "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/schemas/v1.json"
+$schema: "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/schemas/v1.json"
 id: benchmark-provider
 protocol_version: "1.5"
 name: "Benchmark Provider"
@@ -61,7 +61,7 @@ streaming:
 
 /// Sample protocol JSON (simulating dist/ fast path)
 const SAMPLE_PROTOCOL_JSON: &str = r#"{
-  "$schema": "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/schemas/v1.json",
+  "$schema": "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/schemas/v1.json",
   "id": "benchmark-provider",
   "protocol_version": "1.5",
   "name": "Benchmark Provider",

@@ -188,7 +188,7 @@ impl ProtocolLoader {
 
         // Last resort: try GitHub raw URL (canonical source) - JSON (v2 first)
         let github_json_v2 = format!(
-            "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/dist/v2/providers/{}.json",
+            "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/dist/v2/providers/{}.json",
             provider_id
         );
         if let Ok(manifest) = self.load_from_json_url(&github_json_v2).await {
@@ -197,7 +197,7 @@ impl ProtocolLoader {
 
         // Last resort fallback: v1 JSON
         let github_json = format!(
-            "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/dist/v1/providers/{}.json",
+            "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/dist/v1/providers/{}.json",
             provider_id
         );
         if let Ok(manifest) = self.load_from_json_url(&github_json).await {
@@ -206,7 +206,7 @@ impl ProtocolLoader {
 
         // Last resort fallback: YAML
         let github_yaml = format!(
-            "https://raw.githubusercontent.com/hiddenpath/ai-protocol/main/v1/providers/{}.yaml",
+            "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/v1/providers/{}.yaml",
             provider_id
         );
         if let Ok(manifest) = self.load_from_url(&github_yaml).await {

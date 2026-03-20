@@ -105,7 +105,7 @@ fn api_reference_url(provider_id: &str) -> &'static str {
         "cerebras" => "https://docs.cerebras.ai/inference-api",
         "ai21" => "https://docs.ai21.com/reference/complete",
         "baidu" => "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
-        _ => "https://github.com/hiddenpath/ai-protocol",
+        _ => "https://github.com/ailib-official/ai-protocol",
     }
 }
 

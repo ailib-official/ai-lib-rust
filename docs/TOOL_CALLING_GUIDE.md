@@ -422,7 +422,7 @@ Based on the latest search results, here are the key developments...
 
 ## 参考资源
 
-- [AI-Protocol 标准](https://github.com/hiddenpath/ai-protocol)
+- [AI-Protocol 标准](https://github.com/ailib-official/ai-protocol)
 - [Tavily API 文档](https://tavily.com/docs)
 - [OpenAI Function Calling](https://platform.openai.com/docs/guides/function-calling)
 - [DeepSeek API](https://platform.deepseek.com)
