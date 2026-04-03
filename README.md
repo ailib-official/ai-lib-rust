@@ -13,6 +13,27 @@ Unlike traditional adapter libraries that hardcode provider-specific logic, `ai-
 - **Hot-reloadable**: Protocol configurations can be updated without restarting the application
 - **Unified interface**: Developers interact with a single, consistent API regardless of the underlying provider
 
+## 🏗️ Cargo workspace
+
+The repo is a **Cargo workspace** with four crates:
+
+| Crate | Path | Role |
+|-------|------|------|
+| `ai-lib-core` | `crates/ai-lib-core` | Execution layer: client, drivers, pipeline, protocol, types, transport, structured output, etc. |
+| `ai-lib-contact` | `crates/ai-lib-contact` | Policy layer: cache, batch, routing, plugins, interceptors, tokens, telemetry, guardrails, resilience (depends on `ai-lib-core`). |
+| `ai-lib-wasm` | `crates/ai-lib-wasm` | WASI thin exports over `ai-lib-core` for `wasm32-wasip1` (6 host-facing functions, < 2 MB). Not published to crates.io. |
+| `ai-lib-rust` | `crates/ai-lib-rust` | Thin facade: re-exports core + contact so existing `ai_lib_rust::…` paths stay stable. Holds integration tests, examples, and CLI bins. |
+
+From the repo root, `cargo test` runs the default workspace members (the facade crate and its tests). Depend on `ai-lib-core` or `ai-lib-contact` directly if you want a smaller dependency surface without the full umbrella crate.
+
+### WASM target
+
+```bash
+# Build for server-side WASM (wasmtime, etc.)
+cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
+# Binary lands at target/wasm32-wasip1/release/ai_lib_wasm.wasm (~1.2 MB)
+```
+
 ## 🏗️ Architecture
 
 The library is organized into three layers:

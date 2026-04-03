@@ -37,9 +37,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-lib-contact"
+version = "0.9.3"
+dependencies = [
+ "ai-lib-core",
+ "async-trait",
+ "futures",
+ "lru",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "ai-lib-core"
+version = "0.9.3"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-recursion",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "futures",
+ "jsonschema",
+ "keyring",
+ "lru",
+ "notify",
+ "once_cell",
+ "regex",
+ "reqwest 0.11.27",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ai-lib-rust"
 version = "0.9.3"
 dependencies = [
+ "ai-lib-contact",
+ "ai-lib-core",
  "anyhow",
  "arc-swap",
  "async-recursion",
@@ -70,6 +121,16 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "ai-lib-wasm"
+version = "0.9.3"
+dependencies = [
+ "ai-lib-core",
+ "serde",
+ "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]
