@@ -85,11 +85,14 @@ Classification follows a priority pipeline: provider-specific error code → HTT
 Cross-runtime behavioral consistency is verified by a shared YAML-based test suite from the `ai-protocol` repository:
 
 ```bash
-# Run compliance tests
+# Run compliance tests (facade crate)
 cargo test --test compliance
 
 # With explicit compliance directory
 COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test --test compliance
+
+# PT-073 core-only subset (protocol_loading + message_building) on ai-lib-core
+COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test -p ai-lib-core pt073_
 ```
 
 For details, see [CROSS_RUNTIME.md](https://github.com/ailib-official/ai-protocol/blob/main/docs/CROSS_RUNTIME.md).
