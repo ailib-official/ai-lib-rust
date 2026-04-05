@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - `wasm_manifest::load_manifest_validated()` in `ai-lib-core::protocol` — in-memory YAML parse + `ProtocolValidator` (works on both native and WASM).
 - `WasmChatRequest` DTO in `ai-lib-wasm` for safe deserialization without requiring `Deserialize` on `UnifiedRequest`.
 - **PT-073 (Rust):** full compliance YAML suite on `ai-lib-core` via `--test compliance_from_core` (shared runner with the facade `compliance` test). Wasmtime in-process harness: `cargo test -p ai-lib-wasmtime-harness --test wasm_compliance` after building `ai-lib-wasm` for `wasm32-wasip1` release.
+- **GitHub Actions:** `.github/workflows/pt073-rust-core-wasm.yml` runs EP-boundary script, `cargo test -p ai-lib-core`, WASI release build, wasmtime compliance test, and `ai-lib-contact` compile smoke (requires `hiddenpath/ai-protocol` checkout).
 
 ### Changed
 

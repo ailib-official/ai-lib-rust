@@ -1,0 +1,72 @@
+# PT-073 (Wave-5): ai-lib-core compliance, E/P boundary (Rust), WASI wasm + wasmtime harness.
+# Order: EP check → core tests → wasm release build → wasmtime test → contact compile smoke.
+
+name: PT-073 Rust (core + EP + WASM)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    name: Core compliance, EP boundary, WASM
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout ai-lib-rust
+        uses: actions/checkout@v4
+        with:
+          path: ai-lib-rust
+
+      - name: Checkout ai-protocol
+        uses: actions/checkout@v4
+        with:
+          repository: hiddenpath/ai-protocol
+          path: ai-protocol
+
+      - name: Install Rust (stable + wasm32-wasip1)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ai-lib-rust/target
+          key: ${{ runner.os }}-pt073-rust-${{ hashFiles('ai-lib-rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pt073-rust-
+
+      - name: Setup Python (ep-boundary script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: E/P boundary — Rust core sources
+        run: |
+          python "${{ github.workspace }}/ai-protocol/tests/compliance/ep-boundary/check_ep_boundary.py" \
+            --rust-root "${{ github.workspace }}/ai-lib-rust"
+
+      - name: ai-lib-core — full test suite (incl. compliance_from_core)
+        env:
+          COMPLIANCE_DIR: ${{ github.workspace }}/ai-protocol/tests/compliance
+        working-directory: ai-lib-rust
+        run: cargo test -p ai-lib-core
+
+      - name: Build ai-lib-wasm (wasm32-wasip1 release)
+        working-directory: ai-lib-rust
+        run: cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
+
+      - name: Wasmtime — protocol_loading + message_building harness
+        working-directory: ai-lib-rust
+        run: cargo test -p ai-lib-wasmtime-harness --test wasm_compliance
+
+      - name: ai-lib-contact — compile tests (P-layer against core)
+        working-directory: ai-lib-rust
+        run: cargo test -p ai-lib-contact --no-run
