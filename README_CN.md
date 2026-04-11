@@ -333,7 +333,7 @@ futures = "0.3"
 1. 通过 `ProtocolLoader::with_base_path()` 设置的自定义路径
 2. `AI_PROTOCOL_DIR` / `AI_PROTOCOL_PATH`（本地路径或 GitHub raw URL）
 3. 常见开发路径：`ai-protocol/`、`../ai-protocol/`、`../../ai-protocol/`
-4. 最终兜底：GitHub raw `hiddenpath/ai-protocol`（main）
+4. 最终兜底：GitHub raw `ailib-official/ai-protocol`（main）
 
 对每个 base path，provider manifest 的解析顺序为（向后兼容）：
 `dist/v1/providers/<id>.json` → `v1/providers/<id>.yaml`。

@@ -352,7 +352,7 @@ The library automatically looks for protocol manifests in the following location
 1. Custom path set via `ProtocolLoader::with_base_path()`
 2. `AI_PROTOCOL_DIR` / `AI_PROTOCOL_PATH` (local path or GitHub raw URL)
 3. Common dev paths: `ai-protocol/`, `../ai-protocol/`, `../../ai-protocol/`
-4. Last resort: GitHub raw `hiddenpath/ai-protocol` (main)
+4. Last resort: GitHub raw `ailib-official/ai-protocol` (main)
 
 For each base path, provider manifests are resolved in a backward-compatible order:
 `dist/v1/providers/<id>.json` → `v1/providers/<id>.yaml`.

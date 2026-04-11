@@ -31,7 +31,7 @@ jobs:
       - name: Checkout ai-protocol
         uses: actions/checkout@v4
         with:
-          repository: hiddenpath/ai-protocol
+          repository: ailib-official/ai-protocol
           path: ai-protocol
           # If ai-protocol is a submodule, use:
           # submodules: true
