@@ -103,9 +103,12 @@ impl PathMapper {
         Some(current)
     }
 
-    /// Get string value from path (converts number to string if needed)
+    /// Get string value from path (converts number to string if needed, null returns None)
     pub fn get_string(obj: &Value, path: &str) -> Option<String> {
         Self::get_path(obj, path).and_then(|v| {
+            if v.is_null() {
+                return None;
+            }
             if v.is_string() {
                 v.as_str().map(|s| s.to_string())
             } else {
@@ -244,12 +247,15 @@ impl JsonPathEvaluator {
                     continue;
                 }
 
-                // exists() check
+                // exists() check — null values are treated as non-existent
                 if cond.starts_with("exists(") && cond.ends_with(')') {
                     let path = cond.trim_start_matches("exists(").trim_end_matches(')');
-                    if PathMapper::get_path(root, path).is_none() {
-                        ok = false;
-                        break;
+                    match PathMapper::get_path(root, path) {
+                        Some(v) if !v.is_null() => {}
+                        _ => {
+                            ok = false;
+                            break;
+                        }
                     }
                     continue;
                 }

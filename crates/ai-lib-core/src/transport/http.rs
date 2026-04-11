@@ -4,11 +4,19 @@ use bytes::Bytes;
 use futures::TryStreamExt;
 use keyring::Entry;
 use reqwest::Proxy;
+use std::collections::HashSet;
 use std::env;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-pub struct HttpTransport {
+struct TransportRoute {
+    label: String,
     client: reqwest::Client,
+}
+
+pub struct HttpTransport {
+    routes: Vec<TransportRoute>,
+    preferred_route: AtomicUsize,
     base_url: String,
     model: String,
     api_key: Option<String>,
@@ -39,7 +47,32 @@ impl HttpTransport {
             .map(|s| s.to_string())
             .unwrap_or_else(|| manifest.get_base_url().to_string());
 
-        // Minimal production-friendly defaults (env-overridable).
+        let routes = Self::build_routes()?;
+
+        Ok(Self {
+            routes,
+            preferred_route: AtomicUsize::new(0),
+            base_url,
+            model: model.to_string(),
+            api_key,
+        })
+    }
+
+    fn proxy_candidates() -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for key in ["AI_PROXY_URL", "HTTPS_PROXY", "HTTP_PROXY"] {
+            if let Ok(value) = env::var(key) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+                    out.push(trimmed.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    fn client_builder(has_failover_routes: bool) -> reqwest::ClientBuilder {
         let timeout_secs = env::var("AI_HTTP_TIMEOUT_SECS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
@@ -49,9 +82,14 @@ impl HttpTransport {
                     .and_then(|s| s.parse::<u64>().ok())
             })
             .unwrap_or(300);
+        let connect_timeout_ms = env::var("AI_HTTP_CONNECT_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(if has_failover_routes { 2500 } else { 10000 });
 
-        let mut builder = reqwest::Client::builder()
+        reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
+            .connect_timeout(Duration::from_millis(connect_timeout_ms))
             .pool_max_idle_per_host(
                 env::var("AI_HTTP_POOL_MAX_IDLE_PER_HOST")
                     .ok()
@@ -64,28 +102,52 @@ impl HttpTransport {
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(90),
             )))
-            // Conservative HTTP/2 keepalive defaults for long-lived connections.
-            // (No extra env knobs for now to keep developer UI simple.)
             .http2_adaptive_window(true)
             .http2_keep_alive_interval(Some(Duration::from_secs(30)))
-            .http2_keep_alive_timeout(Duration::from_secs(10));
+            .http2_keep_alive_timeout(Duration::from_secs(10))
+    }
 
-        if let Ok(proxy_url) = env::var("AI_PROXY_URL") {
-            if let Ok(proxy) = Proxy::all(&proxy_url) {
-                builder = builder.proxy(proxy);
-            }
+    fn build_client(proxy_url: Option<&str>, has_failover_routes: bool) -> Result<reqwest::Client> {
+        let mut builder = Self::client_builder(has_failover_routes);
+        if let Some(proxy_url) = proxy_url {
+            let proxy = Proxy::all(proxy_url).map_err(|e| {
+                crate::Error::Transport(crate::transport::TransportError::Other(e.to_string()))
+            })?;
+            builder = builder.proxy(proxy);
+        } else {
+            builder = builder.no_proxy();
         }
 
-        let client = builder.build().map_err(|e| {
+        builder.build().map_err(|e| {
             crate::Error::Transport(crate::transport::TransportError::Other(e.to_string()))
-        })?;
-
-        Ok(Self {
-            client,
-            base_url,
-            model: model.to_string(),
-            api_key,
         })
+    }
+
+    fn build_routes() -> Result<Vec<TransportRoute>> {
+        let proxies = Self::proxy_candidates();
+        let has_failover_routes = !proxies.is_empty();
+        let mut routes = Vec::with_capacity(1 + proxies.len());
+        routes.push(TransportRoute {
+            label: "direct".to_string(),
+            client: Self::build_client(None, has_failover_routes)?,
+        });
+        for proxy_url in proxies {
+            routes.push(TransportRoute {
+                label: format!("proxy:{}", proxy_url),
+                client: Self::build_client(Some(&proxy_url), has_failover_routes)?,
+            });
+        }
+        Ok(routes)
+    }
+
+    fn preferred_route_indices(&self) -> Vec<usize> {
+        let len = self.routes.len();
+        let start = self.preferred_route.load(Ordering::Relaxed).min(len.saturating_sub(1));
+        (0..len).map(|offset| (start + offset) % len).collect()
+    }
+
+    fn should_try_alternate_route(status: u16) -> bool {
+        matches!(status, 403 | 407 | 451 | 502 | 503 | 504)
     }
 
     fn get_api_key(provider_id: &str) -> Option<String> {
@@ -130,31 +192,54 @@ impl HttpTransport {
         path: &str,
         request_body: &serde_json::Value,
         client_request_id: Option<&str>,
+        accept_event_stream: bool,
     ) -> Result<reqwest::Response> {
         let interpolated_path = path.replace("{model}", &self.model);
         let url = format!("{}{}", self.base_url, interpolated_path);
+        let mut last_err = None;
+        for idx in self.preferred_route_indices() {
+            let route = &self.routes[idx];
+            let mut req = match method.to_uppercase().as_str() {
+                "POST" => route.client.post(&url).json(request_body),
+                "PUT" => route.client.put(&url).json(request_body),
+                "DELETE" => route.client.delete(&url),
+                _ => route.client.get(&url),
+            };
 
-        let mut req = match method.to_uppercase().as_str() {
-            "POST" => self.client.post(&url).json(request_body),
-            "PUT" => self.client.put(&url).json(request_body),
-            "DELETE" => self.client.delete(&url),
-            _ => self.client.get(&url),
-        };
+            if let Some(key) = &self.api_key {
+                req = req.bearer_auth(key);
+            }
+            if accept_event_stream {
+                req = req.header("accept", "text/event-stream");
+            } else {
+                req = req.header("accept", "application/json");
+            }
+            if let Some(id) = client_request_id {
+                req = req.header("x-ai-protocol-request-id", id);
+            }
 
-        if let Some(key) = &self.api_key {
-            req = req.bearer_auth(key);
+            match req.send().await {
+                Ok(resp) => {
+                    if self.routes.len() > 1 && Self::should_try_alternate_route(resp.status().as_u16()) {
+                        tracing::debug!(
+                            route = route.label.as_str(),
+                            url = url.as_str(),
+                            status = resp.status().as_u16(),
+                            "http route returned retryable route status, trying alternate route"
+                        );
+                        continue;
+                    }
+                    self.preferred_route.store(idx, Ordering::Relaxed);
+                    tracing::debug!(route = route.label.as_str(), url = url.as_str(), "http route selected");
+                    return Ok(resp);
+                }
+                Err(e) => last_err = Some(e),
+            }
         }
 
-        // Prefer SSE for providers that support it
-        req = req.header("accept", "text/event-stream");
-        if let Some(id) = client_request_id {
-            // Our own correlation id. Providers may ignore it, but applications can use it for linkage.
-            req = req.header("x-ai-protocol-request-id", id);
-        }
-
-        req.send()
-            .await
-            .map_err(|e| crate::Error::Transport(crate::transport::TransportError::Http(e)))
+        Err(crate::Error::Transport(crate::transport::TransportError::Http(
+            last_err.expect("at least one route exists"),
+        )))
     }
 
     pub async fn execute_stream<'a>(
@@ -164,7 +249,7 @@ impl HttpTransport {
         request_body: &serde_json::Value,
     ) -> Result<BoxStream<'a, Bytes>> {
         let resp = self
-            .execute_stream_response(method, path, request_body, None)
+            .execute_stream_response(method, path, request_body, None, true)
             .await?;
 
         // Convert reqwest bytes stream to our unified BoxStream
@@ -187,38 +272,55 @@ impl HttpTransport {
     ) -> Result<serde_json::Value> {
         let interpolated_path = path.replace("{model}", &self.model);
         let url = format!("{}{}", self.base_url, interpolated_path);
-        let mut request = match method.to_uppercase().as_str() {
-            "POST" => self.client.post(&url),
-            "PUT" => self.client.put(&url),
-            "DELETE" => self.client.delete(&url),
-            _ => self.client.get(&url),
-        };
+        let mut last_err = None;
+        for idx in self.preferred_route_indices() {
+            let route = &self.routes[idx];
+            let mut request = match method.to_uppercase().as_str() {
+                "POST" => route.client.post(&url),
+                "PUT" => route.client.put(&url),
+                "DELETE" => route.client.delete(&url),
+                _ => route.client.get(&url),
+            };
 
-        if let Some(key) = &self.api_key {
-            request = request.bearer_auth(key);
-        }
+            if let Some(key) = &self.api_key {
+                request = request.bearer_auth(key);
+            }
+            if let Some(headers) = headers {
+                for (k, v) in headers {
+                    request = request.header(k, v);
+                }
+            }
+            if let Some(params) = query_params {
+                request = request.query(params);
+            }
 
-        if let Some(headers) = headers {
-            for (k, v) in headers {
-                request = request.header(k, v);
+            match request.send().await {
+                Ok(response) => {
+                    if self.routes.len() > 1
+                        && Self::should_try_alternate_route(response.status().as_u16())
+                    {
+                        tracing::debug!(
+                            route = route.label.as_str(),
+                            url = url.as_str(),
+                            status = response.status().as_u16(),
+                            "service route returned retryable route status, trying alternate route"
+                        );
+                        continue;
+                    }
+                    self.preferred_route.store(idx, Ordering::Relaxed);
+                    tracing::debug!(route = route.label.as_str(), url = url.as_str(), "service route selected");
+                    let json = response.json().await.map_err(|e| {
+                        crate::Error::Transport(crate::transport::TransportError::Http(e))
+                    })?;
+                    return Ok(json);
+                }
+                Err(e) => last_err = Some(e),
             }
         }
 
-        if let Some(params) = query_params {
-            request = request.query(params);
-        }
-
-        let response = request
-            .send()
-            .await
-            .map_err(|e| crate::Error::Transport(crate::transport::TransportError::Http(e)))?;
-
-        let json = response
-            .json()
-            .await
-            .map_err(|e| crate::Error::Transport(crate::transport::TransportError::Http(e)))?;
-
-        Ok(json)
+        Err(crate::Error::Transport(crate::transport::TransportError::Http(
+            last_err.expect("at least one route exists"),
+        )))
     }
 }
 

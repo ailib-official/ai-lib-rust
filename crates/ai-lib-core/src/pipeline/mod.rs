@@ -241,12 +241,26 @@ impl Pipeline {
             }
 
             // 3. Build event mapper
-            // Prefer manifest-driven rules. If none provided, fallback to adapter-based defaults.
-            if !streaming.event_map.is_empty() {
+            // For OpenAI-compatible SSE, path-based mapping is the most robust option across
+            // both v1 and v2 manifests. It avoids schema-shape drift in rule-based event maps
+            // (`fields` vs `extract`, raw path matchers vs boolean expressions).
+            let prefer_path_mapper = streaming
+                .decoder
+                .as_ref()
+                .and_then(|d| d.strategy.as_deref())
+                == Some("openai_chat");
+
+            let tool_use = manifest.tooling.as_ref().and_then(|t| t.tool_use.clone());
+            if prefer_path_mapper {
+                builder = builder.set_mapper(Box::new(event_map::PathEventMapper::new(
+                    streaming.content_path.clone(),
+                    streaming.tool_call_path.clone(),
+                    streaming.usage_path.clone(),
+                    tool_use,
+                )));
+            } else if !streaming.event_map.is_empty() {
                 builder = builder.set_mapper(event_map::create_event_mapper(&streaming.event_map)?);
             } else {
-                let tool_use = manifest.tooling.as_ref().and_then(|t| t.tool_use.clone());
-                // Default: manifest-driven path mapping for OpenAI-compatible streaming
                 builder = builder.set_mapper(Box::new(event_map::PathEventMapper::new(
                     streaming.content_path.clone(),
                     streaming.tool_call_path.clone(),
