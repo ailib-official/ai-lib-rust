@@ -78,9 +78,7 @@ fn wasmtime_protocol_loading_and_message_building() {
     preview1::add_to_linker_sync(&mut linker, |s| s).expect("link wasi preview1");
 
     let module = Module::from_file(&engine, &wasm_path).expect("load wasm module");
-    let wasi = WasiCtxBuilder::new()
-        .inherit_stdio()
-        .build_p1();
+    let wasi = WasiCtxBuilder::new().inherit_stdio().build_p1();
     let mut store = Store::new(&engine, wasi);
     let instance = linker
         .instantiate(&mut store, &module)
@@ -99,7 +97,8 @@ fn wasmtime_protocol_loading_and_message_building() {
         .expect("ailib_load_manifest call");
     assert!(handle != 0, "ailib_load_manifest returned 0 (failure)");
 
-    let req_json = br#"{"model":"qwen-turbo","messages":[{"role":"user","content":"hello"}],"stream":false}"#;
+    let req_json =
+        br#"{"model":"qwen-turbo","messages":[{"role":"user","content":"hello"}],"stream":false}"#;
     let build = instance
         .get_typed_func::<(u32, u32, u32), i32>(&mut store, "ailib_build_chat_request")
         .expect("ailib_build_chat_request");

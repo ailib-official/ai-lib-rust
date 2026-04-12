@@ -54,22 +54,22 @@ pub mod config;
 pub mod error;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod loader;
-/// In-memory YAML manifest parse + validate (WASI and host; no async / remote loader).
-pub mod wasm_manifest;
 pub mod manifest;
 pub mod request;
 pub mod schema;
 pub mod v2;
 pub mod validator;
+/// In-memory YAML manifest parse + validate (WASI and host; no async / remote loader).
+pub mod wasm_manifest;
 
 // Re-export main types for convenient access
 pub use config::*;
 pub use error::ProtocolError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use loader::ProtocolLoader;
-pub use wasm_manifest::load_manifest_validated;
 pub use manifest::ProtocolManifest;
 pub use request::UnifiedRequest;
 pub use schema::ProtocolSchema;
 pub use v2::{CapabilitiesV2, Capability, FeatureFlags, ManifestV2};
 pub use validator::ProtocolValidator;
+pub use wasm_manifest::load_manifest_validated;

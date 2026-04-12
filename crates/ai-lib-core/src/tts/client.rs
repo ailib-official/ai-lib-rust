@@ -1,8 +1,10 @@
 //! TTS (Text-to-Speech) client.
+//! TTS（文本转语音）客户端。
 
 use super::types;
 use super::types::{AudioOutput, TtsOptions};
 use crate::{Error, ErrorContext, Result};
+use std::str::FromStr;
 
 /// Client for text-to-speech synthesis.
 pub struct TtsClient {
@@ -68,7 +70,7 @@ impl TtsClient {
         let format = options
             .response_format
             .as_deref()
-            .map(types::AudioFormat::from_str)
+            .map(|s| types::AudioFormat::from_str(s).unwrap_or(types::AudioFormat::Mp3))
             .unwrap_or(types::AudioFormat::Mp3);
         Ok(AudioOutput {
             data: bytes.to_vec(),

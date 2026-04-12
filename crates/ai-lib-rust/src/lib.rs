@@ -14,14 +14,14 @@ pub use ai_lib_contact::resilience;
 pub use ai_lib_contact::batch;
 #[cfg(feature = "guardrails")]
 pub use ai_lib_contact::guardrails;
-#[cfg(feature = "tokens")]
-pub use ai_lib_contact::tokens;
-#[cfg(feature = "telemetry")]
-pub use ai_lib_contact::telemetry;
-#[cfg(feature = "routing_mvp")]
-pub use ai_lib_contact::routing;
 #[cfg(feature = "interceptors")]
 pub use ai_lib_contact::interceptors;
+#[cfg(feature = "routing_mvp")]
+pub use ai_lib_contact::routing;
+#[cfg(feature = "telemetry")]
+pub use ai_lib_contact::telemetry;
+#[cfg(feature = "tokens")]
+pub use ai_lib_contact::tokens;
 
 #[cfg(feature = "routing_mvp")]
 pub use ai_lib_contact::routing::{

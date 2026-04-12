@@ -1,14 +1,16 @@
-//! Guardrails configuration
+//! Guardrails configuration.
+//! 栏杆配置模块。
 
 use serde::{Deserialize, Serialize};
 
 /// Action to take when a filter rule matches
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterAction {
     /// Block the content entirely
     Block,
     /// Allow but log a warning
+    #[default]
     Warn,
     /// Log for audit purposes only
     Log,
@@ -16,12 +18,6 @@ pub enum FilterAction {
     Sanitize,
     /// Allow without any action
     Allow,
-}
-
-impl Default for FilterAction {
-    fn default() -> Self {
-        FilterAction::Warn
-    }
 }
 
 /// A filter rule definition
@@ -157,7 +153,6 @@ impl GuardrailsConfig {
                 .with_category("credentials")
                 .with_description("Access token mention"),
         ];
-
         config
     }
 }

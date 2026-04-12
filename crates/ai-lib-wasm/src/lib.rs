@@ -88,7 +88,9 @@ fn driver_for_handle(handle: u32) -> Result<Box<dyn ProviderDriver>, String> {
         .checked_sub(1)
         .and_then(|i| g.get(i as usize))
         .ok_or_else(|| "invalid manifest handle".to_string())?;
-    let (m, raw) = slot.as_ref().ok_or_else(|| "invalid manifest handle".to_string())?;
+    let (m, raw) = slot
+        .as_ref()
+        .ok_or_else(|| "invalid manifest handle".to_string())?;
     let caps = caps_from_manifest(m);
     let style = api_style_from_raw(raw);
     Ok(create_driver(style, m.id.as_str(), caps))
@@ -218,7 +220,11 @@ pub unsafe extern "C" fn ailib_build_chat_request(
             return -1;
         }
     };
-    let driver = create_driver(api_style_from_raw(raw), m.id.as_str(), caps_from_manifest(m));
+    let driver = create_driver(
+        api_style_from_raw(raw),
+        m.id.as_str(),
+        caps_from_manifest(m),
+    );
     let built = match driver.build_request(
         &req.messages,
         &req.model,

@@ -29,15 +29,20 @@ impl AudioFormat {
             Self::Pcm => "audio/pcm",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Self {
+impl std::str::FromStr for AudioFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "opus" => Self::Opus,
-            "aac" => Self::Aac,
-            "flac" => Self::Flac,
-            "wav" => Self::Wav,
-            "pcm" => Self::Pcm,
-            _ => Self::Mp3,
+            "opus" => Ok(Self::Opus),
+            "aac" => Ok(Self::Aac),
+            "flac" => Ok(Self::Flac),
+            "wav" => Ok(Self::Wav),
+            "pcm" => Ok(Self::Pcm),
+            "mp3" | "mpeg" => Ok(Self::Mp3),
+            _ => Ok(Self::Mp3), // Default fallback
         }
     }
 }
