@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.9.4 - 2026-04-13
+
+### Fixed
+- **Protocol v1→v2 consistency**: Fixed critical bug ensuring consistent manifest loading across v1 and v2 formats.
+- **Clippy compliance**: Implemented `FromStr` trait for `Modality` and `AudioFormat` (RUST-001).
+- **Clippy derivable_impls**: Used `#[derive(Default)]` for `FilterAction`.
+- Removed missing example declaration from Cargo.toml.
+
+### Changed
+- **README rewritten**: Updated to reflect E/P separation architecture (v0.9).
+- **CI**: Uses `ailib-official/ai-protocol` as protocol source.
+
 ## Unreleased
 
 ### Added
