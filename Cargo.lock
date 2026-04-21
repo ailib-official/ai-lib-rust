@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-wasm"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "ai-lib-core",
  "serde",

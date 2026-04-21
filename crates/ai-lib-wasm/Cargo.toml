@@ -1,10 +1,10 @@
 [package]
 name = "ai-lib-wasm"
-version = "0.9.4"
+version = "0.9.5"
 edition = "2021"
 authors = ["AI-Protocol Team"]
 license = "MIT OR Apache-2.0"
-description = "WASI wasm32 exports for ai-lib-core execution layer (PT-072)"
+description = "WASI wasm32 exports for ai-lib-core execution layer (PT-072 + WASM-001/002/003)"
 repository = "https://github.com/ailib-official/ai-lib-rust"
 rust-version = "1.75"
 publish = false
