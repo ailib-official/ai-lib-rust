@@ -68,6 +68,75 @@ impl AiClient {
     fn is_transient_server_status(status: u16) -> bool {
         (500..=599).contains(&status)
     }
+
+    fn nonstream_response_paths(&self) -> Vec<&str> {
+        let mut paths = Vec::new();
+        if let Some(response_paths) = &self.manifest.response_paths {
+            if let Some(path) = response_paths.get("content") {
+                paths.push(path.as_str());
+            }
+        }
+
+        // V2 OpenAI-compatible manifests may omit v1-style `response_paths`.
+        paths.push("choices[0].message.content");
+        paths
+    }
+
+    fn nonstream_reasoning_paths(&self) -> Vec<&str> {
+        let mut paths = Vec::new();
+        if let Some(response_paths) = &self.manifest.response_paths {
+            for key in ["reasoning_content", "reasoning"] {
+                if let Some(path) = response_paths.get(key) {
+                    paths.push(path.as_str());
+                }
+            }
+        }
+
+        // Common OpenAI-compatible reasoning field.
+        paths.push("choices[0].message.reasoning_content");
+        paths
+    }
+
+    fn extract_nonstream_response(&self, json: &serde_json::Value, response: &mut UnifiedResponse) {
+        for path in self.nonstream_response_paths() {
+            if let Some(content) = crate::utils::json_path::PathMapper::get_string(json, path) {
+                if !content.is_empty() {
+                    response.content = content;
+                    break;
+                }
+            }
+        }
+
+        if response.usage.is_none() {
+            if let Some(paths) = &self.manifest.response_paths {
+                if let Some(usage_path) = paths.get("usage") {
+                    if let Some(usage_value) =
+                        crate::utils::json_path::PathMapper::get_path(json, usage_path)
+                    {
+                        response.usage = Some(usage_value.clone());
+                    }
+                }
+            }
+        }
+
+        if response.usage.is_none() {
+            if let Some(usage_value) = crate::utils::json_path::PathMapper::get_path(json, "usage")
+            {
+                response.usage = Some(usage_value.clone());
+            }
+        }
+
+        if response.content.is_empty() {
+            for path in self.nonstream_reasoning_paths() {
+                if let Some(content) = crate::utils::json_path::PathMapper::get_string(json, path) {
+                    if !content.is_empty() {
+                        response.content = content;
+                        break;
+                    }
+                }
+            }
+        }
+    }
     /// Start a streaming request and return the event stream.
     ///
     /// This is a single attempt (no retry/fallback). Higher-level policy loops live in the caller.
@@ -93,6 +162,7 @@ impl AiClient {
                 &endpoint.path,
                 &provider_request,
                 Some(&client_request_id),
+                true,
             )
             .await?;
 
@@ -235,6 +305,7 @@ impl AiClient {
                 &endpoint.path,
                 &provider_request,
                 Some(&client_request_id),
+                request.stream,
             )
             .await?;
 
@@ -321,26 +392,7 @@ impl AiClient {
             })?;
 
             let mut response = UnifiedResponse::default();
-
-            // Extract content using response_paths
-            if let Some(paths) = &self.manifest.response_paths {
-                let paths: &std::collections::HashMap<String, String> = paths;
-                if let Some(content_path) = paths.get("content") {
-                    if let Some(content) =
-                        crate::utils::json_path::PathMapper::get_string(&json, content_path)
-                    {
-                        response.content = content;
-                    }
-                }
-                if let Some(usage_path) = paths.get("usage") {
-                    if let Some(usage_value) =
-                        crate::utils::json_path::PathMapper::get_path(&json, usage_path)
-                    {
-                        response.usage = Some(usage_value.clone());
-                    }
-                }
-                // TODO: Extract tool_calls if needed
-            }
+            self.extract_nonstream_response(&json, &mut response);
 
             if last_upstream_request_id.is_none() {
                 last_upstream_request_id = PreflightExt::header_first(

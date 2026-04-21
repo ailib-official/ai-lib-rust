@@ -16,6 +16,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.9.4 - 2026-04-11
+
+### Changed
+
+- **OpenAI-compatible non-stream parsing**: fallback to standard `choices[0].message.content` / `usage` paths when V2 manifests omit V1-style `response_paths`, restoring correct DeepSeek non-stream output extraction.
+- **OpenAI-compatible streaming**: prefer path-based mapping for `openai_chat` SSE decoders and honor `stream` parameter mappings from protocol manifests, restoring DeepSeek/Groq incremental `delta` delivery.
+- **HTTP transport routing**: try direct plus configured local proxy routes (`AI_PROXY_URL`, `HTTPS_PROXY`, `HTTP_PROXY`), remember the last successful path, and auto-fail over on connection or region/proxy-style statuses (`403`, `407`, `451`, `502`, `503`, `504`).
+
 ### Added
 
 - E/P boundary types: `ExecutionResult`, `ExecutionMetadata`, `ExecutionUsage` (`types::execution_result`), plus JSON serde for `StandardErrorCode` via canonical `E1xxx` strings.
@@ -23,10 +31,13 @@ All notable changes to this project will be documented in this file.
 - `wasm_manifest::load_manifest_validated()` in `ai-lib-core::protocol` — in-memory YAML parse + `ProtocolValidator` (works on both native and WASM).
 - `WasmChatRequest` DTO in `ai-lib-wasm` for safe deserialization without requiring `Deserialize` on `UnifiedRequest`.
 - **PT-073 (Rust):** full compliance YAML suite on `ai-lib-core` via `--test compliance_from_core` (shared runner with the facade `compliance` test). Wasmtime in-process harness: `cargo test -p ai-lib-wasmtime-harness --test wasm_compliance` after building `ai-lib-wasm` for `wasm32-wasip1` release.
-- **GitHub Actions:** `.github/workflows/pt073-rust-core-wasm.yml` runs EP-boundary script, `cargo test -p ai-lib-core`, WASI release build, wasmtime compliance test, and `ai-lib-contact` compile smoke (requires `hiddenpath/ai-protocol` checkout).
+- **GitHub Actions:** `.github/workflows/pt073-rust-core-wasm.yml` runs EP-boundary script, `cargo test -p ai-lib-core`, WASI release build, wasmtime compliance test, and `ai-lib-contact` compile smoke (checkout `ailib-official/ai-protocol`).
+- **CI:** All workflow `repository:` references now use `ailib-official/ai-protocol` (GOV-001 v2: unified org).
 
 ### Changed
 
+- **`HttpTransport::execute_stream_response`**: added `accept_event_stream`; non-streaming calls use `Accept: application/json` instead of always requesting SSE (avoids empty `message.content` on some OpenAI-compatible providers when `stream: false`).
+- **Non-stream response parsing**: if the primary `content` path is empty, try manifest `reasoning_content` / `reasoning` paths (e.g. DeepSeek reasoner-style payloads).
 - **Workspace layout (PT-068)**: split into `ai-lib-core` (execution), `ai-lib-contact` (policy), `ai-lib-wasm` (WASI exports), and `ai-lib-rust` (facade re-exports, tests, examples, bins).
 - **`AiClient`**: no longer wires circuit breaker / rate limiter; use `ai_lib_contact::resilience` (or the facade `ai_lib_rust::resilience`) beside the client. `SignalsSnapshot` / preflight policy focus on inflight saturation only; header-driven rate-limit updates and breaker record hooks were removed from the client path.
 - `ai-lib-core`: on `wasm32` targets, `client`, `transport`, `pipeline`, `feedback`, `registry`, and optional feature modules (`embeddings`, `mcp`, etc.) are excluded via `cfg(not(target_arch = "wasm32"))`. `ProtocolValidator` on wasm uses `validate_basic` only (no `jsonschema` crate).

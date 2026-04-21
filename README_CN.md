@@ -1,342 +1,45 @@
 # ai-lib-rust
 
-**AI-Protocol 协议运行时** — 高性能 Rust 参考实现
+**AI-Protocol 协议运行时** - 高性能 Rust 参考实现
 
-`ai-lib-rust` 是 [AI-Protocol](https://github.com/ailib-official/ai-protocol) 规范的 Rust 运行时实现，体现了核心设计原则：
-
-> **一切逻辑皆算子，一切配置皆协议**
+`ai-lib-rust` 是 [AI-Protocol](https://github.com/ailib-official/ai-protocol) 规范的 Rust 运行时实现。它体现了核心设计原则：**一切逻辑皆算子，一切配置皆协议** (All logic is operators, all configuration is protocol)。
 
 ## 🎯 设计哲学
 
-与传统硬编码 Provider 逻辑的适配器库不同，`ai-lib-rust` 是一个**协议驱动的运行时**：
+与硬编码 provider 特定逻辑的传统适配器库不同，`ai-lib-rust` 是一个**协议驱动的运行时**，执行 AI-Protocol 规范。这意味着：
 
-- **零硬编码** — 所有行为由协议 Manifest（YAML/JSON）驱动
-- **算子流水线** — Decoder → Selector → Accumulator → FanOut → EventMapper
-- **热重载** — 协议配置可在运行时更新，无需重启应用
-- **统一接口** — 单一 API 适配所有 Provider，开发者无需关心底层差异
+- **零硬编码 provider 逻辑**：所有行为都由协议 manifest 驱动（source YAML 或 dist JSON）
+- **基于算子的架构**：通过可组合的算子处理（Decoder → Selector → Accumulator → FanOut → EventMapper）
+- **热重载**：协议配置可以在不重启应用的情况下更新
+- **统一接口**：开发者使用单一、一致的 API，无论底层 provider 是什么
 
-## 🏗️ v0.9 架构：E/P 分层
+## 🏗️ 架构
 
-从 v0.9.0 开始，`ai-lib-rust` 采用 **执行层/策略层分离** 架构，将核心执行能力与策略决策解耦：
+库分为三层：
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      ai-lib-rust (Facade)                    │
-│              向后兼容的统一入口，重新导出 core + contact        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-          ┌───────────────────┴───────────────────┐
-          ▼                                       ▼
-┌─────────────────────┐               ┌─────────────────────┐
-│    ai-lib-core      │               │   ai-lib-contact    │
-│     (E 执行层)       │               │     (P 策略层)       │
-├─────────────────────┤               ├─────────────────────┤
-│ • protocol 加载     │               │ • routing 路由       │
-│ • client 客户端     │               │ • cache 缓存         │
-│ • transport 传输    │               │ • batch 批处理       │
-│ • pipeline 流水线   │◄──────────────│ • plugins 插件       │
-│ • drivers 驱动      │               │ • interceptors 拦截器│
-│ • types 类型系统    │               │ • guardrails 守卫    │
-│ • structured 结构化 │               │ • telemetry 遥测     │
-│ • mcp/computer_use  │               │ • tokens Token计算   │
-│ • embeddings 嵌入   │               │ • resilience 弹性    │
-└─────────────────────┘               └─────────────────────┘
-          │
-          ▼
-┌─────────────────────┐
-│     ai-lib-wasm     │
-│   (WASI 导出层)      │
-├─────────────────────┤
-│ • 6 个导出函数       │
-│ • wasm32-wasip1     │
-│ • ~1.2 MB 二进制     │
-│ • 不含 P 层依赖      │
-└─────────────────────┘
-```
+### 1. 协议规范层 (`protocol/`)
+- **Loader**: 从本地文件系统、嵌入式资源或远程 URL 加载协议文件
+- **Validator**: 根据 JSON Schema 验证协议
+- **Schema**: 协议结构定义
 
-### E/P 分层的优势
+### 2. 流水线解释器层 (`pipeline/`)
+- **Decoder**: 将原始字节解析为协议帧（SSE、JSON Lines 等）
+- **Selector**: 使用 JSONPath 表达式过滤帧
+- **Accumulator**: 累积有状态数据（例如，工具调用参数）
+- **FanOut**: 处理多候选场景
+- **EventMapper**: 将协议帧转换为统一事件
 
-| 维度 | E 层 (ai-lib-core) | P 层 (ai-lib-contact) |
-|------|-------------------|----------------------|
-| **职责** | 确定性执行、协议加载、类型转换 | 策略决策、缓存、路由、遥测 |
-| **依赖** | 最小化，无状态 | 依赖 E 层，可有状态 |
-| **WASM** | 可编译到 wasm32-wasip1 | 不支持（策略逻辑不适合 WASM） |
-| **适用场景** | 边缘设备、浏览器、Serverless | 服务端、完整应用 |
+### 3. 用户接口层 (`client/`, `types/`)
+- **Client**: 统一客户端接口
+- **Types**: 基于 AI-Protocol `standard_schema` 的标准类型系统
 
-### Cargo Workspace 结构
+## 🔄 V2 协议对齐
 
-| Crate | 路径 | 角色 | 发布 |
-|-------|------|------|------|
-| `ai-lib-core` | `crates/ai-lib-core` | 执行层：协议加载、客户端、传输、流水线、类型 | crates.io |
-| `ai-lib-contact` | `crates/ai-lib-contact` | 策略层：缓存、批处理、路由、插件、遥测、弹性 | crates.io |
-| `ai-lib-wasm` | `crates/ai-lib-wasm` | WASI 导出：6 个函数，< 2 MB | 不发布 |
-| `ai-lib-rust` | `crates/ai-lib-rust` | 门面层：重新导出 core + contact，保持向后兼容 | crates.io |
-| `ai-lib-wasmtime-harness` | `crates/ai-lib-wasmtime-harness` | WASM 集成测试（可选，依赖较重） | 不发布 |
+从 v0.7.0 开始，`ai-lib-rust` 与 **AI-Protocol V2** 规范对齐。V0.8.0 新增完整 V2 运行时支持，包括 V2 manifest 解析、Provider 驱动、MCP、Computer Use 及扩展多模态。
 
-## 📦 安装
+### 标准错误码（V2）
 
-### 基础安装（门面层）
-
-```toml
-[dependencies]
-ai-lib-rust = "0.9"
-```
-
-### 直接依赖子 Crate
-
-如果只需要执行层能力（更小的依赖图）：
-
-```toml
-[dependencies]
-ai-lib-core = "0.9"
-```
-
-如果需要策略层能力：
-
-```toml
-[dependencies]
-ai-lib-contact = "0.9"
-```
-
-### Feature Flags
-
-```toml
-[dependencies]
-# 精简核心（默认）
-ai-lib-rust = "0.9"
-
-# 启用特定能力
-ai-lib-rust = { version = "0.9", features = ["embeddings", "telemetry"] }
-
-# 启用全部能力
-ai-lib-rust = { version = "0.9", features = ["full"] }
-```
-
-**执行层 Features**（ai-lib-core）：
-- `embeddings` — 嵌入向量生成
-- `mcp` — MCP 工具桥接
-- `computer_use` — Computer Use 抽象
-- `multimodal` — 扩展多模态支持
-- `reasoning` — 推理/思维链支持
-- `stt` / `tts` — 语音识别/合成
-- `reranking` — 重排序
-
-**策略层 Features**（ai-lib-contact）：
-- `batch` — 批处理执行
-- `cache` — 缓存管理
-- `routing_mvp` — 模型路由
-- `guardrails` — 输入/输出守卫
-- `tokens` — Token 计数与成本估算
-- `telemetry` — 遥测与可观测性
-- `interceptors` — 调用拦截器
-
-## 🚀 快速开始
-
-### 基本用法
-
-```rust
-use ai_lib_rust::{AiClient, Message};
-
-#[tokio::main]
-async fn main() -> ai_lib_rust::Result<()> {
-    // 协议驱动：支持 ai-protocol manifest 中定义的任何 provider
-    let client = AiClient::new("anthropic/claude-3-5-sonnet").await?;
-    
-    let messages = vec![
-        Message::system("You are a helpful assistant."),
-        Message::user("Hello!"),
-    ];
-    
-    // 非流式调用
-    let response = client
-        .chat()
-        .messages(messages)
-        .temperature(0.7)
-        .execute()
-        .await?;
-    
-    println!("{}", response.content);
-    Ok(())
-}
-```
-
-### 流式响应
-
-```rust
-use ai_lib_rust::{AiClient, Message};
-use ai_lib_rust::types::events::StreamingEvent;
-use futures::StreamExt;
-
-#[tokio::main]
-async fn main() -> ai_lib_rust::Result<()> {
-    let client = AiClient::new("openai/gpt-4o").await?;
-    
-    let mut stream = client
-        .chat()
-        .messages(vec![Message::user("讲一个笑话")])
-        .stream()
-        .execute_stream()
-        .await?;
-    
-    while let Some(event) = stream.next().await {
-        match event? {
-            StreamingEvent::PartialContentDelta { content, .. } => print!("{content}"),
-            StreamingEvent::StreamEnd { .. } => break,
-            _ => {}
-        }
-    }
-    
-    Ok(())
-}
-```
-
-### 跨任务共享客户端
-
-`AiClient` 故意不实现 `Clone`（API 密钥合规），使用 `Arc` 共享：
-
-```rust
-use std::sync::Arc;
-
-let client = Arc::new(AiClient::new("deepseek/deepseek-chat").await?);
-
-// 传递给多个异步任务
-let handle = tokio::spawn({
-    let c = Arc::clone(&client);
-    async move {
-        c.chat().messages(vec![Message::user("Hi")]).execute().await
-    }
-});
-```
-
-## 🔧 配置
-
-### 协议 Manifest 搜索路径
-
-运行时按以下顺序查找协议配置：
-
-1. `ProtocolLoader::with_base_path()` 设置的自定义路径
-2. `AI_PROTOCOL_DIR` / `AI_PROTOCOL_PATH` 环境变量
-3. 常见开发路径：`ai-protocol/`、`../ai-protocol/`、`../../ai-protocol/`
-4. 最终兜底：GitHub raw `ailib-official/ai-protocol`
-
-### API 密钥
-
-**推荐方式**（生产环境）：
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-..."
-export DEEPSEEK_API_KEY="sk-..."
-```
-
-**可选方式**（本地开发）：操作系统密钥环（macOS Keychain / Windows Credential Manager / Linux Secret Service）
-
-### 生产环境配置
-
-```bash
-# 代理
-export AI_PROXY_URL="http://user:pass@host:port"
-
-# 超时
-export AI_HTTP_TIMEOUT_SECS=30
-
-# 并发限制
-export AI_LIB_MAX_INFLIGHT=10
-
-# 速率限制
-export AI_LIB_RPS=5  # 或 AI_LIB_RPM=300
-
-# 熔断器
-export AI_LIB_BREAKER_FAILURE_THRESHOLD=5
-export AI_LIB_BREAKER_COOLDOWN_SECS=30
-```
-
-## 🧪 测试
-
-### 单元测试
-
-```bash
-cargo test
-```
-
-### 兼容性测试（跨运行时一致性）
-
-```bash
-# 默认运行
-cargo test --test compliance
-
-# 指定兼容性测试目录
-COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test --test compliance
-
-# 从 ai-lib-core 运行（共享测试套件）
-COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test -p ai-lib-core --test compliance_from_core
-```
-
-### WASM 集成测试
-
-```bash
-# 构建 WASM
-cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
-
-# 运行 wasmtime 测试
-cargo test -p ai-lib-wasmtime-harness --test wasm_compliance
-```
-
-### 使用 Mock 服务器测试
-
-```bash
-# 启动 ai-protocol-mock
-docker-compose up -d
-
-# 使用 Mock 运行测试
-MOCK_HTTP_URL=http://localhost:4010 cargo test -- --ignored --nocapture
-```
-
-## 🌐 WASM 支持
-
-`ai-lib-wasm` 提供服务器端 WASM 支持（wasmtime、Wasmer 等）：
-
-```bash
-# 构建 WASM 二进制
-cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
-
-# 输出：target/wasm32-wasip1/release/ai_lib_wasm.wasm (~1.2 MB)
-```
-
-**WASM 导出函数**：
-- `chat_sync` — 同步聊天
-- `chat_stream_init` / `chat_stream_poll` / `chat_stream_end` — 流式聊天
-- `embed_sync` — 同步嵌入
-
-**限制**：WASM 版本仅包含 E 层能力，不含缓存、路由、遥测等 P 层功能。
-
-## 📊 可观测性
-
-### 调用统计
-
-```rust
-let (response, stats) = client.call_model_with_stats(request).await?;
-println!("request_id: {}", stats.client_request_id);
-println!("latency_ms: {:?}", stats.latency_ms);
-```
-
-### 遥测反馈（opt-in）
-
-```rust
-use ai_lib_rust::telemetry::{FeedbackEvent, ChoiceSelectionFeedback};
-
-client.report_feedback(FeedbackEvent::ChoiceSelection(
-    ChoiceSelectionFeedback {
-        request_id: stats.client_request_id,
-        chosen_index: 0,
-        ..Default::default()
-    }
-)).await?;
-```
-
-## 🔄 错误码（V2 规范）
-
-所有 Provider 错误归一化为 13 个标准错误码：
+所有 provider 错误被分类为 13 个标准错误码，具有统一的重试/回退语义：
 
 | 错误码 | 名称 | 可重试 | 可回退 |
 |--------|------|--------|--------|
@@ -354,47 +57,479 @@ client.report_feedback(FeedbackEvent::ChoiceSelection(
 | E4002 | `cancelled` | 否 | 否 |
 | E9999 | `unknown` | 否 | 否 |
 
-## 🤝 社区与贡献
+分类遵循优先级管道：provider 特定错误码 → HTTP 状态码覆盖 → 标准 HTTP 映射 → `E9999`。
 
-### 适用场景
+### 兼容性测试
 
-- **服务端应用** — 使用 `ai-lib-rust`（门面）或直接依赖 `ai-lib-contact` 获得完整能力
-- **边缘计算/嵌入式** — 使用 `ai-lib-core` 获得最小依赖和确定性执行
-- **浏览器/WASM** — 使用 `ai-lib-wasm` 在 WebAssembly 环境运行
+跨运行时行为一致性通过 `ai-protocol` 仓库中的共享 YAML 测试套件验证：
 
-### 贡献指南
+```bash
+# 运行兼容性测试
+cargo test --test compliance
+
+# 指定兼容性测试目录
+COMPLIANCE_DIR=../ai-protocol/tests/compliance cargo test --test compliance
+```
+
+详细信息请参阅 [CROSS_RUNTIME.md](https://github.com/ailib-official/ai-protocol/blob/main/docs/CROSS_RUNTIME.md)。
+
+### 使用 ai-protocol-mock 进行测试
+
+在无需真实 API 调用的集成和 MCP 测试中，可使用 [ai-protocol-mock](https://github.com/ailib-official/ai-protocol-mock)：
+
+```bash
+# 启动 mock 服务（在 ai-protocol-mock 仓库中）
+docker-compose up -d
+
+# 使用 mock 运行测试
+MOCK_HTTP_URL=http://localhost:4010 MOCK_MCP_URL=http://localhost:4010/mcp cargo test -- --ignored --nocapture
+
+# 运行指定 mock 集成测试
+MOCK_HTTP_URL=http://localhost:4010 cargo test test_sse_streaming_via_mock test_error_classification_via_mock -- --ignored --nocapture
+```
+
+或在代码中：`AiClientBuilder::new().base_url_override("http://localhost:4010").build(...)`
+
+## 🧩 Feature 与 re-export（对外便利入口）
+
+`ai-lib-rust` 的 runtime 核心保持精简；一些“更上层、更偏应用”的工具通过 feature opt-in 暴露，并在 crate root 做 re-export 以提升易用性。
+
+更深入的架构说明见：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+
+- **默认可用的 crate root re-export**：
+  - `AiClient`, `AiClientBuilder`, `CancelHandle`, `CallStats`, `ChatBatchRequest`, `EndpointExt`
+  - `Message`, `MessageRole`, `StreamingEvent`, `ToolCall`
+  - `Result<T>`, `Error`, `ErrorContext`
+  - `FeedbackEvent`, `FeedbackSink`（核心反馈类型）
+- **Capability features（V2 对齐）**：
+  - **`embeddings`**：嵌入向量生成（`EmbeddingClient`）
+  - **`batch`**：批量 API 处理（`BatchExecutor`）
+  - **`guardrails`**：输入/输出校验
+  - **`tokens`**：Token 计数与成本估算
+  - **`telemetry`**：可观测性 Sink（`InMemoryFeedbackSink`, `ConsoleFeedbackSink` 等）
+  - **`mcp`**：MCP（Model Context Protocol）工具桥接 — 基于命名空间的工具转换与过滤
+  - **`computer_use`**：Computer Use 抽象 — 安全策略、域名白名单、动作校验
+  - **`multimodal`**：扩展多模态 — 视觉、音频、视频模态校验与格式检查
+  - **`reasoning`**：扩展推理 / 思维链支持
+- **Infrastructure features**：
+  - **`routing_mvp`**：纯逻辑模型管理工具（`CustomModelManager`, `ModelArray` 等）
+  - **`interceptors`**：应用层调用钩子（`InterceptorPipeline`, `Interceptor`, `RequestContext`）
+- **Meta-feature**：
+  - **`full`**：启用所有 capability 与 infrastructure features
+
+启用方式：
+
+```toml
+[dependencies]
+ai-lib-rust = "0.8.4"
+
+# 启用特定能力
+ai-lib-rust = { version = "0.8.4", features = ["embeddings", "telemetry"] }
+
+# 全部启用
+ai-lib-rust = { version = "0.8.4", features = ["full"] }
+```
+
+## 🗺️ 能力结构清单（按层次划分）
+
+下面是面向开发者的“能力地图”，按 runtime 的分层来组织：
+
+### 1）协议层（`src/protocol/`）
+- **`ProtocolLoader`**：从本地路径 / 环境变量路径 / GitHub raw URL 加载 provider manifest
+- **`ProtocolValidator`**：JSON Schema 验证（发布后也支持离线：内置 v1 schema 兜底）
+- **`ProtocolManifest`**：provider manifest 的强类型结构
+- **`UnifiedRequest`**：运行时内部的统一请求结构（provider 无关）
+
+### 2）传输层（`src/transport/`）
+- **`HttpTransport`**：基于 reqwest 的传输实现（支持 `AI_PROXY_URL`、timeout 等生产 knobs）
+- **API key 解析**：keyring → 环境变量 `<PROVIDER_ID>_API_KEY`
+
+### 3）流水线解释器层（`src/pipeline/`）
+- **算子流水线**：decoder → selector → accumulator → fanout → event mapper
+- **流式归一化**：把 provider 的 frame 映射为统一的 `StreamingEvent`
+
+### 4）客户端层（`src/client/`）
+- **`AiClient`**：runtime 入口（`"provider/model"`）
+- **Chat builder**：`client.chat().messages(...).stream().execute_stream()`
+- **Batch**：`chat_batch`, `chat_batch_smart`
+- **可观测性**：`call_model_with_stats` → `CallStats`
+- **取消流**：`execute_stream_with_cancel()` → `CancelHandle`
+- **服务发现/服务调用**：`EndpointExt` 调用 protocol `services` 声明的管理接口
+
+### 5）弹性/策略层（`src/resilience/` + `client/policy`）
+- **策略引擎**：capability 校验 + retry/fallback 决策
+- **Rate limiter**：token bucket +（可选）基于 headers 的自适应模式
+- **Circuit breaker**：最小熔断器（env 或 builder 默认值）
+- **Backpressure**：max in-flight 并发许可
+
+### 6）类型系统层（`src/types/`）
+- **消息**：`Message`, `MessageRole`, `MessageContent`, `ContentBlock`
+- **工具**：`ToolDefinition`, `FunctionDefinition`, `ToolCall`
+- **事件**：`StreamingEvent`
+
+### 7）Telemetry 层（`src/telemetry/`）
+- **`FeedbackSink` / `FeedbackEvent`**：可选的反馈上报能力（opt-in）
+- **扩展反馈类型**：`RatingFeedback`、`ThumbsFeedback`、`TextFeedback`、`CorrectionFeedback`、`RegenerateFeedback`、`StopFeedback`
+- **多种 Sink**：`InMemoryFeedbackSink`、`ConsoleFeedbackSink`、`CompositeFeedbackSink`
+- **全局 Sink 管理**：`get_feedback_sink()`、`set_feedback_sink()`、`report_feedback()`
+
+### 8）Embedding 层（`src/embeddings/`）- v0.6.5 新增
+- **`EmbeddingClient` / `EmbeddingClientBuilder`**：从文本生成嵌入向量
+- **类型**：`Embedding`、`EmbeddingRequest`、`EmbeddingResponse`、`EmbeddingUsage`
+- **向量运算**：`cosine_similarity`、`dot_product`、`euclidean_distance`、`manhattan_distance`
+- **工具函数**：`normalize_vector`、`average_vectors`、`weighted_average_vectors`、`find_most_similar`
+
+### 9）Cache 层（`src/cache/`）- v0.6.5 新增
+- **`CacheBackend`** trait：`MemoryCache` 和 `NullCache` 实现
+- **`CacheManager`**：基于 TTL 的缓存管理，支持统计
+- **`CacheKey` / `CacheKeyGenerator`**：确定性缓存键生成
+
+### 10）Token 层（`src/tokens/`）- v0.6.5 新增
+- **`TokenCounter`** trait：`CharacterEstimator`、`AnthropicEstimator`、`CachingCounter`
+- **`ModelPricing`**：预配置 GPT-4o、Claude 等模型定价
+- **`CostEstimate`**：请求成本估算
+
+### 11）Batch 层（`src/batch/`）- v0.6.5 新增
+- **`BatchCollector` / `BatchConfig`**：请求收集与批处理配置
+- **`BatchExecutor`**：可配置策略的批量执行器
+- **`BatchResult`**：结构化的批量执行结果
+
+### 12）Plugin 层（`src/plugins/`）- v0.6.5 新增
+- **`Plugin`** trait：带生命周期钩子的插件接口
+- **`PluginRegistry`**：集中式插件管理
+- **钩子系统**：`HookType`、`Hook`、`HookManager`
+- **中间件**：`Middleware`、`MiddlewareChain` 用于请求/响应转换
+
+### 13）工具层（`src/utils/`）
+- JSONPath/路径映射、tool-call assembler 等运行时小工具
+
+### 14）可选上层工具（feature-gated）
+- **`routing_mvp`**（`src/routing/`）：模型选择 + endpoint array 负载均衡（纯逻辑）
+- **`interceptors`**（`src/interceptors/`）：调用前后钩子（日志/指标/审计）
+
+## 🚀 快速开始
+
+### 基本用法（非流式）
+
+```rust
+use ai_lib_rust::{AiClient, Message};
+
+#[tokio::main]
+async fn main() -> ai_lib_rust::Result<()> {
+    // 直接使用 provider/model 字符串创建客户端
+    // 这完全由协议驱动，支持 ai-protocol manifest 中定义的任何 provider
+    let client = AiClient::new("deepseek/deepseek-chat").await?;
+
+    let messages = vec![
+        Message::system("You are a helpful assistant."),
+        Message::user("Hello! Explain the runtime briefly."),
+    ];
+
+    // 非流式：返回完整响应
+    let resp = client
+        .chat()
+        .messages(messages)
+        .temperature(0.7)
+        .max_tokens(500)
+        .execute()
+        .await?;
+
+    println!("Response:\n{}", resp.content);
+    if let Some(usage) = resp.usage {
+        println!("\nUsage: {usage:?}");
+    }
+
+    Ok(())
+}
+```
+
+### 流式用法
+
+```rust
+use ai_lib_rust::{AiClient, Message};
+use ai_lib_rust::types::events::StreamingEvent;
+use futures::StreamExt;
+
+#[tokio::main]
+async fn main() -> ai_lib_rust::Result<()> {
+    let client = AiClient::new("deepseek/deepseek-chat").await?;
+
+    let messages = vec![Message::user("你好！")];
+
+    // 流式：返回事件流
+    let mut stream = client
+        .chat()
+        .messages(messages)
+        .temperature(0.7)
+        .stream()
+        .execute_stream()
+        .await?;
+
+    while let Some(event) = stream.next().await {
+        match event? {
+            StreamingEvent::PartialContentDelta { content, .. } => print!("{content}"),
+            StreamingEvent::StreamEnd { .. } => break,
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+```
+
+### 多模态（图像 / 音频）
+
+多模态输入表示为 `MessageContent::Blocks(Vec<ContentBlock>)`。
+
+```rust
+use ai_lib_rust::{Message, MessageRole};
+use ai_lib_rust::types::message::{MessageContent, ContentBlock};
+
+fn multimodal_message(image_path: &str) -> ai_lib_rust::Result<Message> {
+    let blocks = vec![
+        ContentBlock::text("简要描述这张图片。"),
+        ContentBlock::image_from_file(image_path)?,
+    ];
+    Ok(Message::with_content(
+        MessageRole::User,
+        MessageContent::blocks(blocks),
+    ))
+}
+```
+
+### 有用的环境变量
+
+- `AI_PROTOCOL_DIR` / `AI_PROTOCOL_PATH`: 本地 `ai-protocol` 仓库根目录路径（包含 `v1/`）
+- `AI_LIB_ATTEMPT_TIMEOUT_MS`: 统一策略引擎使用的每次尝试超时保护
+- `AI_LIB_BATCH_CONCURRENCY`: 批量操作的并发限制覆盖
+
+### 自定义协议
+
+```rust
+use ai_lib_rust::protocol::ProtocolLoader;
+
+let loader = ProtocolLoader::new()
+    .with_base_path("./ai-protocol")
+    .with_hot_reload(true);
+
+let manifest = loader.load_provider("openai").await?;
+```
+
+## 📦 安装
+
+添加到 `Cargo.toml`：
+
+```toml
+[dependencies]
+ai-lib-rust = "0.8.4"
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+```
+
+## 🔧 配置
+
+库自动在以下位置查找协议 manifest（按顺序）：
+
+1. 通过 `ProtocolLoader::with_base_path()` 设置的自定义路径
+2. `AI_PROTOCOL_DIR` / `AI_PROTOCOL_PATH`（本地路径或 GitHub raw URL）
+3. 常见开发路径：`ai-protocol/`、`../ai-protocol/`、`../../ai-protocol/`
+4. 最终兜底：GitHub raw `ailib-official/ai-protocol`（main）
+
+对每个 base path，provider manifest 的解析顺序为（向后兼容）：
+`dist/v1/providers/<id>.json` → `v1/providers/<id>.yaml`。
+
+协议 manifest 应遵循 AI-Protocol 规范（v1.5 / V2）结构。运行时根据 AI-Protocol 仓库中的官方 JSON Schema 验证 manifest。
+
+## 🔐 Provider 要求（API 密钥）
+
+大多数 provider 需要 API 密钥。运行时按以下顺序读取密钥：
+
+1. **操作系统密钥环**（可选，便利功能）
+   - **Windows**: 使用 Windows 凭据管理器
+   - **macOS**: 使用 Keychain
+   - **Linux**: 使用 Secret Service API
+   - 服务：`ai-protocol`，用户名：provider id
+   - **注意**：密钥环是可选的，在容器/WSL 中可能无法工作。会自动回退到环境变量。
+
+2. **环境变量**（生产环境推荐）
+   - 格式：`<PROVIDER_ID>_API_KEY`（例如 `DEEPSEEK_API_KEY`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`）
+   - **推荐用于**：CI/CD、容器、WSL、生产部署
+
+**示例**：
+```bash
+# 通过环境变量设置 API 密钥（推荐）
+export DEEPSEEK_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# 或使用密钥环（可选，用于本地开发）
+# Windows: 存储在凭据管理器中
+# macOS: 存储在 Keychain 中
+```
+
+Provider 特定细节各不相同，但 `ai-lib-rust` 在统一客户端 API 后面将它们标准化。
+
+## 🌐 代理 / 超时 / 背压（生产环境配置）
+
+- **代理**：设置 `AI_PROXY_URL`（例如 `http://user:pass@host:port`）
+- **HTTP 超时**：设置 `AI_HTTP_TIMEOUT_SECS`（后备：`AI_TIMEOUT_SECS`）
+- **并发限制**：设置 `AI_LIB_MAX_INFLIGHT` 或使用 `AiClientBuilder::max_inflight(n)`
+- **速率限制**（可选）：设置以下之一
+  - `AI_LIB_RPS`（每秒请求数），或
+  - `AI_LIB_RPM`（每分钟请求数）
+- **熔断器**（可选）：通过 `AiClientBuilder::circuit_breaker_default()` 或环境变量启用
+  - `AI_LIB_BREAKER_FAILURE_THRESHOLD`（默认 5）
+  - `AI_LIB_BREAKER_COOLDOWN_SECS`（默认 30）
+
+## 📊 可观测性：CallStats
+
+如果需要每次调用的统计信息（延迟、重试、请求 ID、端点），请使用：
+
+```rust
+let (resp, stats) = client.call_model_with_stats(unified_req).await?;
+println!("client_request_id={}", stats.client_request_id);
+```
+
+## 🛑 可取消的流式响应
+
+```rust
+let (mut stream, cancel) = client.chat().messages(messages).stream().execute_stream_with_cancel().await?;
+// cancel.cancel(); // 发出 StreamEnd{finish_reason:"cancelled"}，丢弃底层网络流，并释放并发许可
+```
+
+## 🧾 可选反馈（Choice Selection）
+
+遥测是**选择加入**的。您可以注入 `FeedbackSink` 并显式报告反馈：
+
+```rust
+use ai_lib_rust::telemetry::{FeedbackEvent, ChoiceSelectionFeedback};
+
+client.report_feedback(FeedbackEvent::ChoiceSelection(ChoiceSelectionFeedback {
+    request_id: stats.client_request_id.clone(),
+    chosen_index: 0,
+    rejected_indices: None,
+    latency_to_select_ms: None,
+    ui_context: None,
+    candidate_hashes: None,
+})).await?;
+```
+
+## 🎨 核心特性
+
+### 协议驱动架构
+
+没有 `match provider` 语句。所有逻辑都来自协议配置：
+
+```rust
+// 流水线从协议 manifest 动态构建
+let pipeline = Pipeline::from_manifest(&manifest)?;
+
+// 算子通过 manifest（YAML/JSON）配置，而不是硬编码
+// 添加新 provider 需要零代码更改
+```
+
+### 多候选支持
+
+通过 `FanOut` 算子自动处理多候选场景：
+
+```yaml
+streaming:
+  candidate:
+    candidate_id_path: "$.choices[*].index"
+    fan_out: true
+```
+
+### 工具累积
+
+工具调用参数的有状态累积：
+
+```yaml
+streaming:
+  accumulator:
+    stateful_tool_parsing: true
+    key_path: "$.delta.partial_json"
+    flush_on: "$.type == 'content_block_stop'"
+```
+
+### 热重载
+
+协议配置可以在运行时更新：
+
+```rust
+let loader = ProtocolLoader::new().with_hot_reload(true);
+// 协议更改会自动拾取
+```
+
+## 📚 示例
+
+查看 `examples/` 目录：
+
+- `basic_usage.rs`: 简单的非流式聊天完成
+- `deepseek_chat_stream.rs`: 流式聊天示例
+- `deepseek_tool_call_stream.rs`: 流式工具调用
+- `custom_protocol.rs`: 加载自定义协议配置
+- `list_models.rs`: 列出 provider 的可用模型
+- `service_discovery.rs`: 服务发现和自定义服务调用
+- `test_protocol_loading.rs`: 协议加载自检
+
+## 🧪 测试
+
+```bash
+cargo test
+```
+
+## 📦 批量（聊天）
+
+对于批量执行（保持顺序），请使用：
+
+```rust
+use ai_lib_rust::{AiClient, ChatBatchRequest, Message};
+
+let client = AiClient::new("deepseek/deepseek-chat").await?;
+
+let reqs = vec![
+    ChatBatchRequest::new(vec![Message::user("你好")]),
+    ChatBatchRequest::new(vec![Message::user("用一句话解释 SSE")])
+        .temperature(0.2),
+];
+
+let results = client.chat_batch(reqs, Some(5)).await;
+```
+
+### 智能批量调优
+
+如果您更喜欢保守的默认启发式，请使用：
+
+```rust
+let results = client.chat_batch_smart(reqs).await;
+```
+
+通过以下方式覆盖并发：
+- `AI_LIB_BATCH_CONCURRENCY`
+
+## 🤝 贡献
+
+欢迎贡献！请确保：
 
 1. 所有协议配置遵循 AI-Protocol 规范（v1.5 / V2）
-2. 新功能需包含测试，兼容性测试必须通过
-3. 代码通过 `cargo clippy` 检查
-4. 遵循 [Rust API 设计原则](https://rust-lang.github.io/api-guidelines/)
-
-### 行为准则
-
-- 尊重所有贡献者
-- 欢迎不同背景的参与者
-- 专注于技术讨论，避免人身攻击
-- 发现问题请通过 GitHub Issues 反馈
-
-## 🔗 相关项目
-
-| 项目 | 说明 |
-|------|------|
-| [AI-Protocol](https://github.com/ailib-official/ai-protocol) | 协议规范（v1.5 / V2） |
-| [ai-lib-python](https://github.com/ailib-official/ai-lib-python) | Python 运行时 |
-| [ai-lib-ts](https://github.com/ailib-official/ai-lib-ts) | TypeScript 运行时 |
-| [ai-lib-go](https://github.com/ailib-official/ai-lib-go) | Go 运行时 |
-| [ai-protocol-mock](https://github.com/ailib-official/ai-protocol-mock) | Mock 服务器 |
+2. 新算子有适当文档
+3. 新功能包含测试
+4. 兼容性测试通过（`cargo test --test compliance`）
+5. 代码遵循 Rust 最佳实践并通过 `cargo clippy`
 
 ## 📄 许可证
 
-本项目采用双许可证：
+本项目采用以下许可证之一：
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 - MIT License ([LICENSE-MIT](LICENSE-MIT))
 
-您可任选其一。
+您可以选择其中一种。
+
+## 🔗 相关项目
+
+- [AI-Protocol](https://github.com/ailib-official/ai-protocol): 协议规范（v1.5 / V2）
+- [ai-lib-python](https://github.com/ailib-official/ai-lib-python): Python 运行时实现
 
 ---
 
-**ai-lib-rust** — 协议与性能的完美结合 🚀
+**ai-lib-rust** - 协议与性能的完美结合。🚀

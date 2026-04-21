@@ -116,7 +116,7 @@ impl RuleBasedEventMapper {
                     tool_consideration: None,
                 })
             }
-            "StreamEnd" => {
+            "StreamEnd" | "FinalCandidate" => {
                 let mut finish: Option<String> = None;
                 for (k, p) in extract {
                     if k == "finish_reason" {
@@ -126,7 +126,64 @@ impl RuleBasedEventMapper {
                 let finish_reason = finish.or_else(|| {
                     crate::utils::PathMapper::get_string(frame, "$.choices[0].finish_reason")
                 });
+                // Only emit StreamEnd when finish_reason is actually present and non-null.
+                // FinalCandidate frames with null finish_reason (mid-stream) should be skipped.
+                if finish_reason.is_none() {
+                    return None;
+                }
                 Some(StreamingEvent::StreamEnd { finish_reason })
+            }
+            "ToolCallStarted" => {
+                let mut tool_call_id: Option<String> = None;
+                let mut tool_name: Option<String> = None;
+                let mut index: Option<u32> = None;
+                for (k, p) in extract {
+                    match k.as_str() {
+                        "tool_call_id" => {
+                            tool_call_id = crate::utils::PathMapper::get_string(frame, p);
+                        }
+                        "tool_name" => {
+                            tool_name = crate::utils::PathMapper::get_string(frame, p);
+                        }
+                        "index" => {
+                            index = crate::utils::PathMapper::get_path(frame, p)
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                        }
+                        _ => {}
+                    }
+                }
+                let tool_call_id = tool_call_id?;
+                let tool_name = tool_name?;
+                Some(StreamingEvent::ToolCallStarted {
+                    tool_call_id,
+                    tool_name,
+                    index,
+                })
+            }
+            "PartialToolCall" => {
+                let mut arguments: Option<String> = None;
+                let mut index: Option<u32> = None;
+                for (k, p) in extract {
+                    match k.as_str() {
+                        "arguments" => {
+                            arguments = crate::utils::PathMapper::get_string(frame, p);
+                        }
+                        "index" => {
+                            index = crate::utils::PathMapper::get_path(frame, p)
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                        }
+                        _ => {}
+                    }
+                }
+                let arguments = arguments?;
+                Some(StreamingEvent::PartialToolCall {
+                    tool_call_id: String::new(),
+                    arguments,
+                    index,
+                    is_complete: None,
+                })
             }
             _ => None,
         }
