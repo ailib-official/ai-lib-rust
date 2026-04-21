@@ -288,8 +288,9 @@ impl ProtocolValidator {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Convert manifest to JSON for validation
-            let manifest_json = serde_json::to_value(manifest)
-                .map_err(|e| ProtocolError::ValidationError(format!("Serialization error: {}", e)))?;
+            let manifest_json = serde_json::to_value(manifest).map_err(|e| {
+                ProtocolError::ValidationError(format!("Serialization error: {}", e))
+            })?;
 
             // 1. JSON Schema validation
             // The bundled/remote schema here is v1-focused. For v2 manifests, skip strict

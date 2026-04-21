@@ -13,11 +13,11 @@ pub mod resilience;
 pub mod batch;
 #[cfg(feature = "guardrails")]
 pub mod guardrails;
-#[cfg(feature = "tokens")]
-pub mod tokens;
-#[cfg(feature = "telemetry")]
-pub mod telemetry;
-#[cfg(feature = "routing_mvp")]
-pub mod routing;
 #[cfg(feature = "interceptors")]
 pub mod interceptors;
+#[cfg(feature = "routing_mvp")]
+pub mod routing;
+#[cfg(feature = "telemetry")]
+pub mod telemetry;
+#[cfg(feature = "tokens")]
+pub mod tokens;

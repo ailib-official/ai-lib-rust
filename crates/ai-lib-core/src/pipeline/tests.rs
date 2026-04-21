@@ -67,7 +67,10 @@ mod pipeline_tests {
                 emit: "PartialContentDelta".to_string(),
                 fields: Some({
                     let mut m = HashMap::new();
-                    m.insert("content".to_string(), "$.choices[*].delta.content".to_string());
+                    m.insert(
+                        "content".to_string(),
+                        "$.choices[*].delta.content".to_string(),
+                    );
                     m
                 }),
             },
@@ -85,7 +88,10 @@ mod pipeline_tests {
                 emit: "StreamEnd".to_string(),
                 fields: Some({
                     let mut m = HashMap::new();
-                    m.insert("finish_reason".to_string(), "$.choices[*].finish_reason".to_string());
+                    m.insert(
+                        "finish_reason".to_string(),
+                        "$.choices[*].finish_reason".to_string(),
+                    );
                     m
                 }),
             },
@@ -113,17 +119,26 @@ mod pipeline_tests {
             .collect()
             .await;
 
-        let content_deltas: Vec<&str> = events.iter().filter_map(|e| match e {
-            StreamingEvent::PartialContentDelta { content, .. } => Some(content.as_str()),
-            _ => None,
-        }).collect();
+        let content_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamingEvent::PartialContentDelta { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(content_deltas, vec!["Hello", " world"]);
 
-        let has_stream_end = events.iter().any(|e| matches!(
-            e,
-            StreamingEvent::StreamEnd { finish_reason: Some(r) } if r == "stop"
-        ));
-        assert!(has_stream_end, "expected StreamEnd with finish_reason='stop', events: {:?}", events);
+        let has_stream_end = events.iter().any(|e| {
+            matches!(
+                e,
+                StreamingEvent::StreamEnd { finish_reason: Some(r) } if r == "stop"
+            )
+        });
+        assert!(
+            has_stream_end,
+            "expected StreamEnd with finish_reason='stop', events: {:?}",
+            events
+        );
     }
 
     #[tokio::test]
@@ -146,17 +161,29 @@ mod pipeline_tests {
             .collect()
             .await;
 
-        let content_deltas: Vec<&str> = events.iter().filter_map(|e| match e {
-            StreamingEvent::PartialContentDelta { content, .. } => Some(content.as_str()),
-            _ => None,
-        }).collect();
-        assert_eq!(content_deltas, vec!["Hi"], "null content should not produce PartialContentDelta");
+        let content_deltas: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamingEvent::PartialContentDelta { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            content_deltas,
+            vec!["Hi"],
+            "null content should not produce PartialContentDelta"
+        );
 
-        let has_stream_end = events.iter().any(|e| matches!(
-            e,
-            StreamingEvent::StreamEnd { finish_reason: Some(r) } if r == "stop"
-        ));
-        assert!(has_stream_end, "StreamEnd should be emitted for finish_reason='stop'");
+        let has_stream_end = events.iter().any(|e| {
+            matches!(
+                e,
+                StreamingEvent::StreamEnd { finish_reason: Some(r) } if r == "stop"
+            )
+        });
+        assert!(
+            has_stream_end,
+            "StreamEnd should be emitted for finish_reason='stop'"
+        );
     }
 
     #[tokio::test]
@@ -167,7 +194,10 @@ mod pipeline_tests {
                 emit: "PartialContentDelta".to_string(),
                 fields: Some({
                     let mut m = HashMap::new();
-                    m.insert("content".to_string(), "$.choices[*].delta.content".to_string());
+                    m.insert(
+                        "content".to_string(),
+                        "$.choices[*].delta.content".to_string(),
+                    );
                     m
                 }),
             },
@@ -176,7 +206,10 @@ mod pipeline_tests {
                 emit: "FinalCandidate".to_string(),
                 fields: Some({
                     let mut m = HashMap::new();
-                    m.insert("finish_reason".to_string(), "$.choices[*].finish_reason".to_string());
+                    m.insert(
+                        "finish_reason".to_string(),
+                        "$.choices[*].finish_reason".to_string(),
+                    );
                     m
                 }),
             },
@@ -197,13 +230,16 @@ mod pipeline_tests {
             .collect()
             .await;
 
-        assert!(events.iter().any(|e| matches!(e, StreamingEvent::PartialContentDelta { .. })));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamingEvent::PartialContentDelta { .. })));
         assert!(
             events.iter().any(|e| matches!(
                 e,
                 StreamingEvent::StreamEnd { finish_reason: Some(r) } if r == "stop"
             )),
-            "FinalCandidate emit should produce StreamEnd, events: {:?}", events
+            "FinalCandidate emit should produce StreamEnd, events: {:?}",
+            events
         );
     }
 }

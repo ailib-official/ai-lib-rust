@@ -142,7 +142,10 @@ impl HttpTransport {
 
     fn preferred_route_indices(&self) -> Vec<usize> {
         let len = self.routes.len();
-        let start = self.preferred_route.load(Ordering::Relaxed).min(len.saturating_sub(1));
+        let start = self
+            .preferred_route
+            .load(Ordering::Relaxed)
+            .min(len.saturating_sub(1));
         (0..len).map(|offset| (start + offset) % len).collect()
     }
 
@@ -220,7 +223,9 @@ impl HttpTransport {
 
             match req.send().await {
                 Ok(resp) => {
-                    if self.routes.len() > 1 && Self::should_try_alternate_route(resp.status().as_u16()) {
+                    if self.routes.len() > 1
+                        && Self::should_try_alternate_route(resp.status().as_u16())
+                    {
                         tracing::debug!(
                             route = route.label.as_str(),
                             url = url.as_str(),
@@ -230,16 +235,20 @@ impl HttpTransport {
                         continue;
                     }
                     self.preferred_route.store(idx, Ordering::Relaxed);
-                    tracing::debug!(route = route.label.as_str(), url = url.as_str(), "http route selected");
+                    tracing::debug!(
+                        route = route.label.as_str(),
+                        url = url.as_str(),
+                        "http route selected"
+                    );
                     return Ok(resp);
                 }
                 Err(e) => last_err = Some(e),
             }
         }
 
-        Err(crate::Error::Transport(crate::transport::TransportError::Http(
-            last_err.expect("at least one route exists"),
-        )))
+        Err(crate::Error::Transport(
+            crate::transport::TransportError::Http(last_err.expect("at least one route exists")),
+        ))
     }
 
     pub async fn execute_stream<'a>(
@@ -308,7 +317,11 @@ impl HttpTransport {
                         continue;
                     }
                     self.preferred_route.store(idx, Ordering::Relaxed);
-                    tracing::debug!(route = route.label.as_str(), url = url.as_str(), "service route selected");
+                    tracing::debug!(
+                        route = route.label.as_str(),
+                        url = url.as_str(),
+                        "service route selected"
+                    );
                     let json = response.json().await.map_err(|e| {
                         crate::Error::Transport(crate::transport::TransportError::Http(e))
                     })?;
@@ -318,9 +331,9 @@ impl HttpTransport {
             }
         }
 
-        Err(crate::Error::Transport(crate::transport::TransportError::Http(
-            last_err.expect("at least one route exists"),
-        )))
+        Err(crate::Error::Transport(
+            crate::transport::TransportError::Http(last_err.expect("at least one route exists")),
+        ))
     }
 }
 

@@ -97,11 +97,7 @@ impl AiClient {
         paths
     }
 
-    fn extract_nonstream_response(
-        &self,
-        json: &serde_json::Value,
-        response: &mut UnifiedResponse,
-    ) {
+    fn extract_nonstream_response(&self, json: &serde_json::Value, response: &mut UnifiedResponse) {
         for path in self.nonstream_response_paths() {
             if let Some(content) = crate::utils::json_path::PathMapper::get_string(json, path) {
                 if !content.is_empty() {
@@ -124,7 +120,8 @@ impl AiClient {
         }
 
         if response.usage.is_none() {
-            if let Some(usage_value) = crate::utils::json_path::PathMapper::get_path(json, "usage") {
+            if let Some(usage_value) = crate::utils::json_path::PathMapper::get_path(json, "usage")
+            {
                 response.usage = Some(usage_value.clone());
             }
         }
