@@ -37,7 +37,9 @@ use ai_lib_core::types::tool::ToolDefinition;
 use serde::{Deserialize, Serialize};
 
 mod state;
-pub use state::{ManifestEntry, StreamState, WasmMetrics, WasmStateSnapshot, SNAPSHOT_FORMAT_VERSION};
+pub use state::{
+    ManifestEntry, StreamState, WasmMetrics, WasmStateSnapshot, SNAPSHOT_FORMAT_VERSION,
+};
 
 /// Current ABI version reported by `ailib_abi_version()`.
 ///
@@ -375,7 +377,9 @@ pub unsafe extern "C" fn ailib_parse_chat_response(
     if let Some(u) = &usage {
         if let Ok(mut m) = METRICS.lock() {
             m.total_tokens_in = m.total_tokens_in.saturating_add(u.prompt_tokens as u64);
-            m.total_tokens_out = m.total_tokens_out.saturating_add(u.completion_tokens as u64);
+            m.total_tokens_out = m
+                .total_tokens_out
+                .saturating_add(u.completion_tokens as u64);
         }
     }
     let usage_v = usage.map(|u| serde_json::to_value(u).unwrap_or(serde_json::Value::Null));
@@ -822,10 +826,7 @@ unsafe fn ailib_invoke_classify_error(
     ailib_classify_error(status, input_ptr, input_len)
 }
 
-fn parse_input_json<T: for<'de> Deserialize<'de>>(
-    ptr: *const u8,
-    len: usize,
-) -> Result<T, String> {
+fn parse_input_json<T: for<'de> Deserialize<'de>>(ptr: *const u8, len: usize) -> Result<T, String> {
     if len == 0 || ptr.is_null() {
         return Err("input required".to_string());
     }
@@ -1174,9 +1175,7 @@ parameter_mappings: {}
     fn test_ailib_invoke_load_and_check_capability() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1, "load_manifest failed: {}", read_err());
 
         let input = format!(r#"{{"handle": {}, "name": "streaming"}}"#, h);
@@ -1193,9 +1192,7 @@ parameter_mappings: {}
     fn test_ailib_invoke_build_request_uses_ctx_handle() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
         let req = serde_json::json!({
             "model": "test-model",
@@ -1274,10 +1271,7 @@ parameter_mappings: {}
         ailib_arena_reset();
         assert_eq!(ailib_out_len(), 0);
         // LAST_ERR is drained too.
-        assert_eq!(
-            LAST_ERR.lock().map(|g| g.len()).unwrap_or(999),
-            0
-        );
+        assert_eq!(LAST_ERR.lock().map(|g| g.len()).unwrap_or(999), 0);
     }
 
     #[test]
@@ -1286,9 +1280,7 @@ parameter_mappings: {}
         // LAST_OUT unboundedly. After each cycle LAST_OUT is empty.
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
         let req = serde_json::to_vec(&serde_json::json!({
             "model": "m",
@@ -1297,9 +1289,7 @@ parameter_mappings: {}
         }))
         .unwrap();
         for _ in 0..1000 {
-            let rc = unsafe {
-                ailib_build_chat_request(h, req.as_ptr(), req.len())
-            };
+            let rc = unsafe { ailib_build_chat_request(h, req.as_ptr(), req.len()) };
             assert_eq!(rc, 0);
             let mut len: usize = 0;
             let ptr = unsafe { ailib_out_consume(&mut len as *mut usize) };
@@ -1326,9 +1316,7 @@ parameter_mappings: {}
     fn test_snapshot_with_manifests() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
         assert_eq!(ailib_snapshot_state(), 0);
         let snap: WasmStateSnapshot = serde_json::from_slice(&read_out()).unwrap();
@@ -1341,9 +1329,7 @@ parameter_mappings: {}
     fn test_restore_roundtrip_manifests() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
         assert_eq!(ailib_snapshot_state(), 0);
         let snap_bytes = read_out();
@@ -1367,13 +1353,12 @@ parameter_mappings: {}
     fn test_restore_corrupt_snapshot_no_side_effect() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
 
         // Malformed snapshot JSON — restore must fail and leave state intact.
-        let corrupt = br#"{"version": 1, "abi_version": 2, "manifests": [{"id":"x","raw_yaml":"not yaml"}]}"#;
+        let corrupt =
+            br#"{"version": 1, "abi_version": 2, "manifests": [{"id":"x","raw_yaml":"not yaml"}]}"#;
         assert_eq!(
             unsafe { ailib_restore_state(corrupt.as_ptr(), corrupt.len()) },
             -1
@@ -1403,9 +1388,7 @@ parameter_mappings: {}
     fn test_invoke_snapshot_and_restore_ops() {
         let _g = test_lock();
         reset_state();
-        let h = unsafe {
-            ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len())
-        };
+        let h = unsafe { ailib_load_manifest(MIN_MANIFEST_YAML.as_ptr(), MIN_MANIFEST_YAML.len()) };
         assert!(h >= 1);
         // snapshot via invoke
         assert_eq!(invoke("snapshot_state", None, None), 0);
