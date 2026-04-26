@@ -136,17 +136,47 @@ impl OpenAiDriver {
     }
 }
 
+/// Merge OpenAI- and Anthropic-flavored token shapes inside a `usage` object (OpenAI
+/// `choices[0].*` envelope). Aligns with browser/TS/Go "unified usage" (ARCH-003).
 fn parse_openai_usage_value(u: &Value) -> UsageInfo {
-    let reasoning = u
-        .pointer("/completion_tokens_details/reasoning_tokens")
-        .and_then(|v| v.as_u64());
+    let flat = |key: &str| -> u64 { u.get(key).and_then(|v| v.as_u64()).unwrap_or(0) };
+    let nested = |outer: &str, inner: &str| -> u64 {
+        u.get(outer)
+            .and_then(|d| d.get(inner))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+    };
+    let first_nonzero = |vals: &[u64]| -> u64 { *vals.iter().find(|&&v| v != 0).unwrap_or(&0) };
+
+    let prompt_tokens = first_nonzero(&[flat("prompt_tokens"), flat("input_tokens")]);
+    let completion_tokens = first_nonzero(&[flat("completion_tokens"), flat("output_tokens")]);
+    let mut total_tokens = flat("total_tokens");
+    if total_tokens == 0 && (prompt_tokens > 0 || completion_tokens > 0) {
+        total_tokens = prompt_tokens + completion_tokens;
+    }
+
+    let reason_sum = first_nonzero(&[
+        flat("reasoning_tokens"),
+        nested("completion_tokens_details", "reasoning_tokens"),
+    ]);
+    let cache_read = first_nonzero(&[
+        flat("cache_read_tokens"),
+        nested("prompt_tokens_details", "cached_tokens"),
+        flat("cache_read_input_tokens"),
+    ]);
+    let cache_create = first_nonzero(&[
+        flat("cache_creation_tokens"),
+        flat("cache_creation_input_tokens"),
+        flat("cache_write_tokens"),
+    ]);
+
     UsageInfo {
-        prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
-        completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
-        total_tokens: u["total_tokens"].as_u64().unwrap_or(0),
-        reasoning_tokens: reasoning,
-        cache_read_tokens: None,
-        cache_creation_tokens: None,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        reasoning_tokens: (reason_sum > 0).then_some(reason_sum),
+        cache_read_tokens: (cache_read > 0).then_some(cache_read),
+        cache_creation_tokens: (cache_create > 0).then_some(cache_create),
     }
 }
 
@@ -279,6 +309,19 @@ impl ProviderDriver for OpenAiDriver {
             }
         }
 
+        // o-series / `reasoning` field (alias used by some OpenAI-compatible proxies)
+        if let Some(thinking) = v
+            .pointer("/choices/0/delta/reasoning")
+            .and_then(|c| c.as_str())
+        {
+            if !thinking.is_empty() {
+                return Ok(Some(StreamingEvent::ThinkingDelta {
+                    thinking: thinking.to_string(),
+                    tool_consideration: None,
+                }));
+            }
+        }
+
         // Finish reason
         if let Some(reason) = v
             .pointer("/choices/0/finish_reason")
@@ -379,6 +422,41 @@ mod tests {
             }
             _ => panic!("Expected ThinkingDelta, got {:?}", event),
         }
+    }
+
+    #[test]
+    fn test_openai_driver_parse_stream_reasoning_field_alias() {
+        let driver = OpenAiDriver::new("openai", vec![]);
+        let data = r#"{"choices":[{"delta":{"reasoning":"alias..."}}]}"#;
+        let event = driver.parse_stream_event(data).unwrap();
+        match event {
+            Some(StreamingEvent::ThinkingDelta { thinking, .. }) => {
+                assert_eq!(thinking, "alias...");
+            }
+            _ => panic!("Expected ThinkingDelta, got {:?}", event),
+        }
+    }
+
+    /// Unified `usage` object may carry Anthropic-style keys inside an OpenAI `choices[0].*` envelope.
+    #[test]
+    fn test_openai_driver_parse_unified_usage_anthropic_keys() {
+        let driver = OpenAiDriver::new("openai", vec![]);
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 3,
+                "cache_creation_input_tokens": 5,
+                "cache_read_input_tokens": 2
+            }
+        });
+        let resp = driver.parse_response(&body).unwrap();
+        let u = resp.usage.expect("usage");
+        assert_eq!(u.prompt_tokens, 12);
+        assert_eq!(u.completion_tokens, 3);
+        assert_eq!(u.total_tokens, 15);
+        assert_eq!(u.cache_creation_tokens, Some(5));
+        assert_eq!(u.cache_read_tokens, Some(2));
     }
 
     #[test]
