@@ -28,6 +28,12 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      # wasmtime compliance tests need a prebuilt WASM artifact; build it first
+      - name: Build wasm target for wasmtime tests
+        run: |
+          rustup target add wasm32-wasip1
+          cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
+
       - name: Run library and integration tests
         env:
           AI_PROTOCOL_DIR: ${{ github.workspace }}/ai-protocol
