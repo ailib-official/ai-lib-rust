@@ -54,24 +54,34 @@ impl ResolvedCredential {
     }
 }
 
+/// Returns the active `AuthConfig` for credential resolution.
+///
+/// V2 manifests declare `endpoint.auth`; V1 manifests use top-level `auth`.
+/// When both are present the endpoint-level config wins (single source of truth)
+/// and the top-level entry is treated purely as a V1 compatibility fallback.
 pub fn primary_auth(manifest: &ProtocolManifest) -> Option<&AuthConfig> {
     manifest.endpoint.auth.as_ref().or(manifest.auth.as_ref())
 }
 
+/// Returns the manifest-declared environment variable names that
+/// `resolve_credential` should probe, in declaration order.
+///
+/// Only the winning [`primary_auth`] entry is scanned, so the list of
+/// candidate env vars is always consistent with the auth attachment shape
+/// applied by the transport. This avoids the V1/V2 ambiguity where two
+/// auth blocks could otherwise contribute env names that no longer match
+/// the active auth type.
 pub fn required_envs(manifest: &ProtocolManifest) -> Vec<String> {
+    let Some(auth) = primary_auth(manifest) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    for auth in [manifest.endpoint.auth.as_ref(), manifest.auth.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        if let Some(env) = auth.token_env.as_ref().or(auth.key_env.as_ref()) {
-            if !env.trim().is_empty() {
-                out.push(env.trim().to_string());
-            }
+    if let Some(env) = auth.token_env.as_ref().or(auth.key_env.as_ref()) {
+        let trimmed = env.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
         }
     }
-    out.sort();
-    out.dedup();
     out
 }
 
@@ -79,15 +89,16 @@ pub fn provider_id(manifest: &ProtocolManifest) -> &str {
     manifest.provider_id.as_deref().unwrap_or(&manifest.id)
 }
 
+/// Returns the conventional `${PROVIDER_ID}_API_KEY` fallback env var name.
+///
+/// The provider id is uppercased and `-` is normalized to `_`, matching the
+/// industry convention used by virtually every provider's official docs
+/// (e.g. `OPENAI_API_KEY`, `DEEP_SEEK_API_KEY`). A single canonical name is
+/// returned; if a deployment uses a non-conventional alias they should declare
+/// it via `auth.token_env` / `auth.key_env` in the manifest instead.
 pub fn conventional_envs(provider_id: &str) -> Vec<String> {
-    let upper = provider_id.to_uppercase();
-    let normalized = upper.replace('-', "_");
-    let mut out = vec![format!("{normalized}_API_KEY")];
-    let exact = format!("{upper}_API_KEY");
-    if exact != out[0] {
-        out.push(exact);
-    }
-    out
+    let normalized = provider_id.to_uppercase().replace('-', "_");
+    vec![format!("{normalized}_API_KEY")]
 }
 
 pub fn resolve_credential(
