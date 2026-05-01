@@ -128,9 +128,7 @@ impl RuleBasedEventMapper {
                 });
                 // Only emit StreamEnd when finish_reason is actually present and non-null.
                 // FinalCandidate frames with null finish_reason (mid-stream) should be skipped.
-                if finish_reason.is_none() {
-                    return None;
-                }
+                finish_reason.as_ref()?;
                 Some(StreamingEvent::StreamEnd { finish_reason })
             }
             "ToolCallStarted" => {
