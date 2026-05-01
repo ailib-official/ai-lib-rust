@@ -49,7 +49,7 @@ async-trait = "0.1"
 bytes = "1.5"
 async-recursion = "1.0"
 lru = "0.12"
-keyring = "2.0"
+keyring = { version = "2.0", optional = true }
 uuid = { version = "1.6", features = ["v4"] }
 base64 = "0.22"
 sha2 = "0.10"
@@ -77,7 +77,10 @@ path = "benches/streaming_pipeline.rs"
 harness = false
 
 [features]
-default = []
+# Default mirrors ai-lib-core: ships with platform keyring on for desktop
+# convenience; opt out with `default-features = false` for slim builds.
+default = ["keyring"]
+keyring = ["dep:keyring", "ai-lib-core/keyring"]
 embeddings = ["ai-lib-core/embeddings"]
 batch = ["ai-lib-core/batch", "ai-lib-contact/batch"]
 guardrails = ["ai-lib-contact/guardrails"]
@@ -93,6 +96,7 @@ reranking = ["ai-lib-core/reranking"]
 routing_mvp = ["ai-lib-contact/routing_mvp"]
 interceptors = ["ai-lib-contact/interceptors"]
 full = [
+    "keyring",
     "embeddings", "batch", "guardrails", "tokens", "telemetry",
     "routing_mvp", "interceptors",
     "mcp", "computer_use", "multimodal", "reasoning",

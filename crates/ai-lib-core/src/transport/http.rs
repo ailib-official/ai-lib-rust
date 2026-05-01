@@ -2,16 +2,45 @@ use crate::protocol::ProtocolManifest;
 use crate::{BoxStream, Result};
 use bytes::Bytes;
 use futures::TryStreamExt;
-use keyring::Entry;
 use reqwest::Proxy;
 use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+/// Tracks `auth_type` strings already warned about by `apply_auth`, so the
+/// "unknown auth_type, falling back to bearer" warn fires once per process
+/// per offending value rather than once per request.
+fn unknown_auth_type_seen() -> &'static Mutex<HashSet<String>> {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn warn_unknown_auth_type_once(auth_type: &str) {
+    let Ok(mut seen) = unknown_auth_type_seen().lock() else {
+        return;
+    };
+    if seen.insert(auth_type.to_string()) {
+        tracing::warn!(
+            auth_type,
+            "unknown manifest auth.type; falling back to Bearer Authorization header"
+        );
+    }
+}
 
 struct TransportRoute {
     label: String,
     client: reqwest::Client,
+}
+
+fn auth_header_value(prefix: &str, secret: &str) -> String {
+    let trimmed = prefix.trim();
+    if trimmed.is_empty() {
+        secret.to_string()
+    } else {
+        format!("{trimmed} {secret}")
+    }
 }
 
 pub struct HttpTransport {
@@ -19,7 +48,8 @@ pub struct HttpTransport {
     preferred_route: AtomicUsize,
     base_url: String,
     model: String,
-    api_key: Option<String>,
+    credential: crate::credentials::ResolvedCredential,
+    auth: Option<crate::protocol::AuthConfig>,
 }
 
 impl HttpTransport {
@@ -39,8 +69,51 @@ impl HttpTransport {
         model: &str,
         base_url_override: Option<&str>,
     ) -> Result<Self> {
-        let provider_id = manifest.provider_id.as_deref().unwrap_or(&manifest.id);
-        let api_key = Self::get_api_key(provider_id);
+        Self::new_with_base_url_and_credential(manifest, model, base_url_override, None)
+    }
+
+    pub fn new_with_base_url_and_credential(
+        manifest: &ProtocolManifest,
+        model: &str,
+        base_url_override: Option<&str>,
+        credential_override: Option<&str>,
+    ) -> Result<Self> {
+        let credential = crate::credentials::resolve_credential(manifest, credential_override);
+        let auth = crate::credentials::primary_auth(manifest).cloned();
+        if let Some(shadowed) = crate::credentials::shadowed_auth(manifest) {
+            tracing::warn!(
+                provider = crate::credentials::provider_id(manifest),
+                primary_auth_type = auth.as_ref().map(|a| a.auth_type.as_str()).unwrap_or(""),
+                primary_token_env = auth
+                    .as_ref()
+                    .and_then(|a| a.token_env.as_deref().or(a.key_env.as_deref()))
+                    .unwrap_or(""),
+                shadowed_auth_type = shadowed.auth_type.as_str(),
+                shadowed_token_env = shadowed
+                    .token_env
+                    .as_deref()
+                    .or(shadowed.key_env.as_deref())
+                    .unwrap_or(""),
+                "manifest declares both endpoint.auth and top-level auth with different credentials; \
+                 endpoint.auth wins, top-level auth is ignored. Update the manifest to remove the \
+                 redundant top-level block."
+            );
+        }
+        if credential.secret().is_some() {
+            tracing::debug!(
+                provider = crate::credentials::provider_id(manifest),
+                source_kind = ?credential.source_kind,
+                source_name = credential.source_name.as_deref().unwrap_or("unknown"),
+                "resolved provider credential"
+            );
+        } else {
+            tracing::warn!(
+                provider = crate::credentials::provider_id(manifest),
+                required_envs = ?credential.required_envs,
+                conventional_envs = ?credential.conventional_envs,
+                "no provider credential found"
+            );
+        }
 
         // Use override if provided, otherwise use manifest endpoint.base_url
         let base_url = base_url_override
@@ -54,7 +127,8 @@ impl HttpTransport {
             preferred_route: AtomicUsize::new(0),
             base_url,
             model: model.to_string(),
-            api_key,
+            credential,
+            auth,
         })
     }
 
@@ -153,40 +227,34 @@ impl HttpTransport {
         matches!(status, 403 | 407 | 451 | 502 | 503 | 504)
     }
 
-    fn get_api_key(provider_id: &str) -> Option<String> {
-        // 1. Try Environment Variable (PROVIDER_API_KEY)
-        let env_var = format!("{}_API_KEY", provider_id.to_uppercase());
-        if let Ok(key) = env::var(&env_var) {
-            tracing::debug!(
-                "Loaded API key for provider '{}' from environment variable '{}'. Length: {}. First char: '{}', Last char: '{}'",
-                provider_id,
-                env_var,
-                key.len(),
-                key.chars().next().unwrap_or('?'),
-                key.chars().last().unwrap_or('?')
-            );
-            tracing::debug!("Key bytes: {:?}", key.as_bytes());
-            return Some(key);
-        }
-
-        // 2. Try Keyring
-        let entry = Entry::new("ai-protocol", provider_id).ok();
-        if let Some(entry) = entry {
-            if let Ok(key) = entry.get_password() {
-                tracing::debug!(
-                    "Loaded API key for provider '{}' from system keyring",
-                    provider_id
-                );
-                return Some(key);
+    fn apply_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let Some(secret) = self.credential.secret() else {
+            return request;
+        };
+        let Some(auth) = self.auth.as_ref() else {
+            return request.bearer_auth(secret);
+        };
+        match auth.auth_type.as_str() {
+            "query_param" => {
+                let param = auth.param_name.as_deref().unwrap_or("api_key");
+                request.query(&[(param, secret)])
+            }
+            "api_key" | "custom_header" | "header" => {
+                let header = auth.header_name.as_deref().unwrap_or("X-API-Key");
+                request.header(header, secret)
+            }
+            "bearer" => {
+                let header = auth.header_name.as_deref().unwrap_or("Authorization");
+                let prefix = auth.prefix.as_deref().unwrap_or("Bearer");
+                request.header(header, auth_header_value(prefix, secret))
+            }
+            other => {
+                warn_unknown_auth_type_once(other);
+                let header = auth.header_name.as_deref().unwrap_or("Authorization");
+                let prefix = auth.prefix.as_deref().unwrap_or("Bearer");
+                request.header(header, auth_header_value(prefix, secret))
             }
         }
-
-        tracing::warn!(
-            "No API key found for provider '{}' (checked env var '{}' and keyring)",
-            provider_id,
-            env_var
-        );
-        None
     }
 
     pub async fn execute_stream_response(
@@ -209,9 +277,7 @@ impl HttpTransport {
                 _ => route.client.get(&url),
             };
 
-            if let Some(key) = &self.api_key {
-                req = req.bearer_auth(key);
-            }
+            req = self.apply_auth(req);
             if accept_event_stream {
                 req = req.header("accept", "text/event-stream");
             } else {
@@ -291,9 +357,7 @@ impl HttpTransport {
                 _ => route.client.get(&url),
             };
 
-            if let Some(key) = &self.api_key {
-                request = request.bearer_auth(key);
-            }
+            request = self.apply_auth(request);
             if let Some(headers) = headers {
                 for (k, v) in headers {
                     request = request.header(k, v);
@@ -344,4 +408,100 @@ pub enum TransportError {
 
     #[error("Transport error: {0}")]
     Other(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::ResolvedCredential;
+    use crate::protocol::AuthConfig;
+
+    fn transport_with(auth: Option<AuthConfig>, secret: Option<&str>) -> HttpTransport {
+        let credential = if let Some(value) = secret {
+            ResolvedCredential::resolved_explicit(value)
+        } else {
+            ResolvedCredential::missing(Vec::new(), Vec::new())
+        };
+        let routes = HttpTransport::build_routes().expect("routes");
+        HttpTransport {
+            routes,
+            preferred_route: AtomicUsize::new(0),
+            base_url: "https://example.invalid/v1".to_string(),
+            model: "model".to_string(),
+            credential,
+            auth,
+        }
+    }
+
+    fn fresh_request_builder() -> reqwest::RequestBuilder {
+        reqwest::Client::new().get("https://example.invalid/v1/test")
+    }
+
+    fn build(req: reqwest::RequestBuilder) -> reqwest::Request {
+        req.build().expect("request")
+    }
+
+    #[test]
+    fn apply_auth_with_no_secret_leaves_request_unchanged() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "bearer".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: None,
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            None,
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        assert!(request.headers().get("authorization").is_none());
+        assert!(!request.url().query().unwrap_or("").contains("api_key"));
+    }
+
+    #[test]
+    fn apply_auth_query_param_attaches_param() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "query_param".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: Some("api_key".to_string()),
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            Some("kp-secret"),
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        let query = request.url().query().expect("query");
+        assert!(
+            query.contains("api_key=kp-secret"),
+            "expected api_key=kp-secret in query, got {query}"
+        );
+        assert!(request.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn apply_auth_unknown_type_falls_back_to_bearer() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "totally_made_up_auth".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: None,
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            Some("ut-secret"),
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        let auth_header = request
+            .headers()
+            .get("authorization")
+            .expect("authorization header set");
+        assert_eq!(auth_header, "Bearer ut-secret");
+    }
 }

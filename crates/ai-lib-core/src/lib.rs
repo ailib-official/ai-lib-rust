@@ -9,6 +9,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod client;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod credentials;
 pub mod drivers;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod feedback;
