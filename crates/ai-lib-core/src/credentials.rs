@@ -3,6 +3,7 @@
 //! 凭证解析模块：按显式覆盖、manifest 环境变量、兼容环境变量、系统 keyring 的顺序解析。
 
 use crate::protocol::{AuthConfig, ProtocolManifest};
+#[cfg(feature = "keyring")]
 use keyring::Entry;
 use std::env;
 use std::fmt;
@@ -130,15 +131,18 @@ pub fn resolve_credential(
         }
     }
 
-    let id = provider_id(manifest);
-    if let Some(value) = keyring_value(id) {
-        return ResolvedCredential {
-            secret: Some(value),
-            source_kind: CredentialSourceKind::Keyring,
-            source_name: Some(format!("ai-protocol/{id}")),
-            required_envs,
-            conventional_envs,
-        };
+    #[cfg(feature = "keyring")]
+    {
+        let id = provider_id(manifest);
+        if let Some(value) = keyring_value(id) {
+            return ResolvedCredential {
+                secret: Some(value),
+                source_kind: CredentialSourceKind::Keyring,
+                source_name: Some(format!("ai-protocol/{id}")),
+                required_envs,
+                conventional_envs,
+            };
+        }
     }
 
     ResolvedCredential::missing(required_envs, conventional_envs)
@@ -151,6 +155,7 @@ fn env_value(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(feature = "keyring")]
 fn keyring_value(provider_id: &str) -> Option<String> {
     Entry::new("ai-protocol", provider_id)
         .ok()
