@@ -6,11 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Credential chain (PT-074)**: `ai-lib-core` now resolves protocol credentials with explicit builder override, manifest-declared env vars, conventional provider env fallback, and native keyring fallback.
+- **Credential chain (PT-074)**: `ai-lib-core` now resolves protocol credentials with explicit builder override, manifest-declared env vars, conventional provider env fallback, and (when the `keyring` feature is enabled) native OS keyring fallback.
+- **Credential resolver tests (PT-074-B-FIX)**: 5 new `credentials::tests` cases covering the missing-credential diagnostic path and the V1/V2 dual-`auth` divergence helper, plus 3 `transport::http::tests` cases covering `apply_auth` behavior with no secret, `query_param` attachment, and unknown-`auth_type` Bearer fallback. A `#[ignore]`-marked keyring path test documents how to validate manually with the `keyring` feature.
 
 ### Changed
 
 - **HTTP transport credentials**: request auth now follows manifest auth metadata for bearer, custom-header/API-key, and query-param attachment, and debug logging no longer emits secret length, edge characters, or raw bytes.
+- **`keyring` is now an opt-in feature (PT-074-B-FIX-1)**: the `keyring` crate moved behind a `keyring` Cargo feature in both `ai-lib-core` and `ai-lib-rust`. The feature is included in `default` so desktop usage is unchanged, but slim/container/CI builds can now disable it with `default-features = false`, removing the transitive D-Bus / libsecret / Security Framework dependency. `full` continues to enable `keyring`.
+- **Credential auth is single-source (PT-074-B-FIX-2)**: `credentials::required_envs()` now scans only the active `primary_auth()` block (V2 `endpoint.auth` wins, V1 top-level `auth` is the fallback). This prevents a "V1 token + V2 attachment shape" Frankenstein resolution when both blocks are declared with divergent envs.
+- **Conventional env var is canonical (PT-074-B-FIX-2)**: `credentials::conventional_envs()` returns a single `${PROVIDER_ID_UPPER_WITH_UNDERSCORES}_API_KEY` entry. Non-conventional aliases must be declared via `auth.token_env` / `auth.key_env` in the manifest.
+- **`AuthConfig` field name aligned with V2 schema (PT-074-B-FIX-4)**: the custom auth header field now serializes as `header` (V2 canonical name) and accepts `header_name` only as a V1 compatibility deserialize alias. The Rust struct identifier `header_name` is unchanged.
+
+### Diagnostics
+
+- **Dual-`auth` drift warning (PT-074-B-FIX-3)**: `HttpTransport` emits a single `tracing::warn!` at construction when a manifest declares both `endpoint.auth` and top-level `auth` with divergent `(type, token_env, key_env)`, naming both blocks so operators can fix the manifest.
+- **Unknown `auth_type` warning (PT-074-B-FIX-3)**: when `apply_auth` encounters an unrecognized `auth.type`, it still falls back to `Bearer Authorization` (reversibility), but emits a `tracing::warn!` once per process per offending value via `OnceLock<Mutex<HashSet<String>>>` dedup.
 
 ## 0.9.4 - 2026-04-11
 
