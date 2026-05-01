@@ -33,6 +33,7 @@ pub struct AiClientBuilder {
     max_inflight: Option<usize>,
     /// Override base URL (primarily for testing with mock servers)
     base_url_override: Option<String>,
+    credential_override: Option<String>,
 }
 
 impl AiClientBuilder {
@@ -45,6 +46,7 @@ impl AiClientBuilder {
             feedback: crate::feedback::noop_sink(),
             max_inflight: None,
             base_url_override: None,
+            credential_override: None,
         }
     }
 
@@ -96,6 +98,20 @@ impl AiClientBuilder {
         self
     }
 
+    /// Provide an explicit credential for this client.
+    ///
+    /// This is the first step in the unified credential chain and is useful for
+    /// applications that decrypt or broker credentials outside ai-lib.
+    pub fn credential(mut self, credential: impl Into<String>) -> Self {
+        self.credential_override = Some(credential.into());
+        self
+    }
+
+    /// Alias for [`Self::credential`] for API-key based providers.
+    pub fn api_key(self, api_key: impl Into<String>) -> Self {
+        self.credential(api_key)
+    }
+
     /// Build the client.
     pub async fn build(self, model: &str) -> Result<AiClient> {
         let mut loader = ProtocolLoader::new();
@@ -126,11 +142,14 @@ impl AiClientBuilder {
             .base_url_override
             .or_else(|| std::env::var("MOCK_HTTP_URL").ok());
 
-        let transport = Arc::new(crate::transport::HttpTransport::new_with_base_url(
-            &manifest,
-            &model_id,
-            base_url_override.as_deref(),
-        )?);
+        let transport = Arc::new(
+            crate::transport::HttpTransport::new_with_base_url_and_credential(
+                &manifest,
+                &model_id,
+                base_url_override.as_deref(),
+                self.credential_override.as_deref(),
+            )?,
+        );
         let pipeline = Arc::new(crate::pipeline::Pipeline::from_manifest(&manifest)?);
 
         let max_inflight = self.max_inflight.or_else(|| {
@@ -159,6 +178,7 @@ impl AiClientBuilder {
             feedback: self.feedback,
             inflight,
             max_inflight,
+            credential_override: self.credential_override,
             attempt_timeout,
             total_requests: AtomicU64::new(0),
             successful_requests: AtomicU64::new(0),

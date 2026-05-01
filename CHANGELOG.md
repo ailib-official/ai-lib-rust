@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **Credential chain (PT-074)**: `ai-lib-core` now resolves protocol credentials with explicit builder override, manifest-declared env vars, conventional provider env fallback, and native keyring fallback.
+
+### Changed
+
+- **HTTP transport credentials**: request auth now follows manifest auth metadata for bearer, custom-header/API-key, and query-param attachment, and debug logging no longer emits secret length, edge characters, or raw bytes.
+
 ## 0.9.4 - 2026-04-11
 
 ### Changed

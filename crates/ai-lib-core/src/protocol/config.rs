@@ -13,6 +13,8 @@ pub struct EndpointDefinition {
     pub protocol: Option<String>, // https, http, ws, wss
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<AuthConfig>,
 }
 
 /// Endpoint configuration for specific operations
@@ -248,8 +250,10 @@ pub struct AuthConfig {
     pub key_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "header", skip_serializing_if = "Option::is_none")]
     pub header_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_headers: Option<Vec<HeaderConfig>>,
 }

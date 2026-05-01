@@ -27,6 +27,7 @@ pub struct AiClient {
     pub(crate) feedback: Arc<dyn crate::feedback::FeedbackSink>,
     pub(crate) inflight: Option<Arc<tokio::sync::Semaphore>>,
     pub(crate) max_inflight: Option<usize>,
+    pub(crate) credential_override: Option<String>,
     pub(crate) attempt_timeout: Option<std::time::Duration>,
     pub(crate) total_requests: AtomicU64,
     pub(crate) successful_requests: AtomicU64,
@@ -112,7 +113,14 @@ impl AiClient {
         let manifest = self.loader.load_model(model).await?;
         validation::validate_manifest(&manifest, self.strict_streaming)?;
 
-        let transport = Arc::new(crate::transport::HttpTransport::new(&manifest, &model_id)?);
+        let transport = Arc::new(
+            crate::transport::HttpTransport::new_with_base_url_and_credential(
+                &manifest,
+                &model_id,
+                None,
+                self.credential_override.as_deref(),
+            )?,
+        );
         let pipeline = Arc::new(crate::pipeline::Pipeline::from_manifest(&manifest)?);
 
         Ok(AiClient {
@@ -126,6 +134,7 @@ impl AiClient {
             feedback: self.feedback.clone(),
             inflight: self.inflight.clone(),
             max_inflight: self.max_inflight,
+            credential_override: self.credential_override.clone(),
             attempt_timeout: self.attempt_timeout,
             total_requests: AtomicU64::new(0),
             successful_requests: AtomicU64::new(0),
