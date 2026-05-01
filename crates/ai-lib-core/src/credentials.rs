@@ -63,6 +63,27 @@ pub fn primary_auth(manifest: &ProtocolManifest) -> Option<&AuthConfig> {
     manifest.endpoint.auth.as_ref().or(manifest.auth.as_ref())
 }
 
+/// Diagnostic helper: returns the V1/top-level `AuthConfig` that is being
+/// shadowed when both `endpoint.auth` and top-level `auth` are present and
+/// differ in any credential-relevant field (`type`, `token_env`, `key_env`).
+///
+/// Returns `None` when only one block is declared, when they are absent, or
+/// when both blocks describe equivalent credentials. Transports use this to
+/// emit a single warn log so V1→V2 migration drift cannot silently cause
+/// "endpoint type + top-level token" Frankenstein resolutions.
+pub fn shadowed_auth(manifest: &ProtocolManifest) -> Option<&AuthConfig> {
+    let endpoint = manifest.endpoint.auth.as_ref()?;
+    let top = manifest.auth.as_ref()?;
+    let same = endpoint.auth_type == top.auth_type
+        && endpoint.token_env == top.token_env
+        && endpoint.key_env == top.key_env;
+    if same {
+        None
+    } else {
+        Some(top)
+    }
+}
+
 /// Returns the manifest-declared environment variable names that
 /// `resolve_credential` should probe, in declaration order.
 ///

@@ -6,7 +6,28 @@ use reqwest::Proxy;
 use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+/// Tracks `auth_type` strings already warned about by `apply_auth`, so the
+/// "unknown auth_type, falling back to bearer" warn fires once per process
+/// per offending value rather than once per request.
+fn unknown_auth_type_seen() -> &'static Mutex<HashSet<String>> {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SEEN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn warn_unknown_auth_type_once(auth_type: &str) {
+    let Ok(mut seen) = unknown_auth_type_seen().lock() else {
+        return;
+    };
+    if seen.insert(auth_type.to_string()) {
+        tracing::warn!(
+            auth_type,
+            "unknown manifest auth.type; falling back to Bearer Authorization header"
+        );
+    }
+}
 
 struct TransportRoute {
     label: String,
@@ -59,6 +80,25 @@ impl HttpTransport {
     ) -> Result<Self> {
         let credential = crate::credentials::resolve_credential(manifest, credential_override);
         let auth = crate::credentials::primary_auth(manifest).cloned();
+        if let Some(shadowed) = crate::credentials::shadowed_auth(manifest) {
+            tracing::warn!(
+                provider = crate::credentials::provider_id(manifest),
+                primary_auth_type = auth.as_ref().map(|a| a.auth_type.as_str()).unwrap_or(""),
+                primary_token_env = auth
+                    .as_ref()
+                    .and_then(|a| a.token_env.as_deref().or(a.key_env.as_deref()))
+                    .unwrap_or(""),
+                shadowed_auth_type = shadowed.auth_type.as_str(),
+                shadowed_token_env = shadowed
+                    .token_env
+                    .as_deref()
+                    .or(shadowed.key_env.as_deref())
+                    .unwrap_or(""),
+                "manifest declares both endpoint.auth and top-level auth with different credentials; \
+                 endpoint.auth wins, top-level auth is ignored. Update the manifest to remove the \
+                 redundant top-level block."
+            );
+        }
         if credential.secret().is_some() {
             tracing::debug!(
                 provider = crate::credentials::provider_id(manifest),
@@ -203,7 +243,13 @@ impl HttpTransport {
                 let header = auth.header_name.as_deref().unwrap_or("X-API-Key");
                 request.header(header, secret)
             }
-            _ => {
+            "bearer" => {
+                let header = auth.header_name.as_deref().unwrap_or("Authorization");
+                let prefix = auth.prefix.as_deref().unwrap_or("Bearer");
+                request.header(header, auth_header_value(prefix, secret))
+            }
+            other => {
+                warn_unknown_auth_type_once(other);
                 let header = auth.header_name.as_deref().unwrap_or("Authorization");
                 let prefix = auth.prefix.as_deref().unwrap_or("Bearer");
                 request.header(header, auth_header_value(prefix, secret))
