@@ -446,9 +446,7 @@ capabilities: [chat]
                 );
             }
             CredentialSourceKind::None => {
-                eprintln!(
-                    "keyring entry not found; populate `ai-protocol/replicate` then re-run"
-                );
+                eprintln!("keyring entry not found; populate `ai-protocol/replicate` then re-run");
             }
             other => panic!("unexpected source_kind: {other:?}"),
         }
