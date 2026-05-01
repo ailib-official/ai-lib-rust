@@ -240,6 +240,13 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// Authentication configuration
+///
+/// Field naming mirrors the V2 manifest schema (`header`, `param_name`,
+/// `token_env`, `key_env`, `prefix`, `extra_headers`). The Rust struct
+/// keeps the local identifier `header_name` for backwards source
+/// compatibility, but on the wire V2 manifests are the canonical form
+/// (`header`) and V1 manifests using `header_name` are accepted via
+/// `#[serde(alias = "header_name")]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     #[serde(rename = "type")]
@@ -250,7 +257,12 @@ pub struct AuthConfig {
     pub key_env: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub param_name: Option<String>,
-    #[serde(default, alias = "header", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "header",
+        alias = "header_name",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub header_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
