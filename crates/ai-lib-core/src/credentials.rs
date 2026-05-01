@@ -52,6 +52,20 @@ impl ResolvedCredential {
             conventional_envs,
         }
     }
+
+    /// Test-only helper: build a `ResolvedCredential` carrying an explicit
+    /// secret without going through env/keyring lookup. Used by transport
+    /// unit tests to drive `apply_auth` without spinning up a full resolver.
+    #[cfg(test)]
+    pub(crate) fn resolved_explicit(secret: &str) -> Self {
+        Self {
+            secret: Some(secret.to_string()),
+            source_kind: CredentialSourceKind::Explicit,
+            source_name: Some("explicit".to_string()),
+            required_envs: Vec::new(),
+            conventional_envs: Vec::new(),
+        }
+    }
 }
 
 /// Returns the active `AuthConfig` for credential resolution.
@@ -298,5 +312,145 @@ capabilities: [chat]
 
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("manifest-token"));
+    }
+
+    #[test]
+    fn missing_credential_lists_required_and_conventional_envs() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _token = EnvGuard::set("REPLICATE_API_TOKEN", None);
+        let _key = EnvGuard::set("REPLICATE_API_KEY", None);
+
+        let resolved = resolve_credential(&manifest(), None);
+
+        assert!(resolved.secret().is_none());
+        assert_eq!(resolved.source_kind, CredentialSourceKind::None);
+        assert!(resolved.source_name.is_none());
+        assert_eq!(resolved.required_envs, vec!["REPLICATE_API_TOKEN"]);
+        assert_eq!(resolved.conventional_envs, vec!["REPLICATE_API_KEY"]);
+    }
+
+    #[test]
+    fn shadowed_auth_returns_none_when_only_endpoint_present() {
+        let manifest: ProtocolManifest = serde_yaml::from_str(
+            r#"
+id: replicate
+protocol_version: "2.0"
+name: "Replicate"
+status: "stable"
+category: "ai_provider"
+official_url: "https://example.com"
+support_contact: "https://example.com/support"
+endpoint:
+  base_url: "https://api.example.com/v1"
+  auth:
+    type: "bearer"
+    token_env: "REPLICATE_API_TOKEN"
+capabilities: [chat]
+"#,
+        )
+        .expect("manifest");
+        assert!(shadowed_auth(&manifest).is_none());
+    }
+
+    #[test]
+    fn shadowed_auth_returns_none_when_blocks_match() {
+        let manifest: ProtocolManifest = serde_yaml::from_str(
+            r#"
+id: replicate
+protocol_version: "1.5"
+name: "Replicate"
+status: "stable"
+category: "ai_provider"
+official_url: "https://example.com"
+support_contact: "https://example.com/support"
+endpoint:
+  base_url: "https://api.example.com/v1"
+  auth:
+    type: "bearer"
+    token_env: "REPLICATE_API_TOKEN"
+auth:
+  type: "bearer"
+  token_env: "REPLICATE_API_TOKEN"
+capabilities: [chat]
+"#,
+        )
+        .expect("manifest");
+        assert!(shadowed_auth(&manifest).is_none());
+    }
+
+    #[test]
+    fn shadowed_auth_flags_divergent_blocks() {
+        let manifest: ProtocolManifest = serde_yaml::from_str(
+            r#"
+id: replicate
+protocol_version: "1.5"
+name: "Replicate"
+status: "stable"
+category: "ai_provider"
+official_url: "https://example.com"
+support_contact: "https://example.com/support"
+endpoint:
+  base_url: "https://api.example.com/v1"
+  auth:
+    type: "bearer"
+    token_env: "REPLICATE_API_TOKEN"
+auth:
+  type: "api_key"
+  key_env: "REPLICATE_LEGACY_KEY"
+  header: "X-Legacy-Key"
+capabilities: [chat]
+"#,
+        )
+        .expect("manifest");
+        let shadowed = shadowed_auth(&manifest).expect("divergence detected");
+        assert_eq!(shadowed.auth_type, "api_key");
+        assert_eq!(shadowed.key_env.as_deref(), Some("REPLICATE_LEGACY_KEY"));
+        // primary_auth still wins.
+        let primary = primary_auth(&manifest).expect("primary auth");
+        assert_eq!(primary.auth_type, "bearer");
+        assert_eq!(primary.token_env.as_deref(), Some("REPLICATE_API_TOKEN"));
+        // required_envs is single-source: only the primary env is probed.
+        assert_eq!(required_envs(&manifest), vec!["REPLICATE_API_TOKEN"]);
+    }
+
+    /// Exercises the OS keyring branch of `resolve_credential`. Ignored by
+    /// default because keyring access requires a host secret service
+    /// (D-Bus on Linux, Security Framework on macOS, Credential Manager on
+    /// Windows) and would otherwise fail in CI/containers.
+    ///
+    /// Manual run (with the `keyring` feature enabled, which is the default):
+    ///
+    /// ```bash
+    /// # macOS:
+    /// security add-generic-password -s ai-protocol -a replicate -w 'kr-secret'
+    /// cargo test -p ai-lib-core --features keyring \
+    ///     credentials::tests::keyring_value_is_resolved -- --ignored
+    /// security delete-generic-password -s ai-protocol -a replicate
+    /// ```
+    #[cfg(feature = "keyring")]
+    #[test]
+    #[ignore]
+    fn keyring_value_is_resolved() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _token = EnvGuard::set("REPLICATE_API_TOKEN", None);
+        let _key = EnvGuard::set("REPLICATE_API_KEY", None);
+
+        let resolved = resolve_credential(&manifest(), None);
+
+        match resolved.source_kind {
+            CredentialSourceKind::Keyring => {
+                assert!(resolved.secret().is_some());
+                assert_eq!(
+                    resolved.source_name.as_deref(),
+                    Some("ai-protocol/replicate")
+                );
+            }
+            CredentialSourceKind::None => {
+                eprintln!(
+                    "keyring entry not found; populate `ai-protocol/replicate` then re-run"
+                );
+            }
+            other => panic!("unexpected source_kind: {other:?}"),
+        }
     }
 }

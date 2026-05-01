@@ -409,3 +409,99 @@ pub enum TransportError {
     #[error("Transport error: {0}")]
     Other(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::credentials::ResolvedCredential;
+    use crate::protocol::AuthConfig;
+
+    fn transport_with(auth: Option<AuthConfig>, secret: Option<&str>) -> HttpTransport {
+        let credential = if let Some(value) = secret {
+            ResolvedCredential::resolved_explicit(value)
+        } else {
+            ResolvedCredential::missing(Vec::new(), Vec::new())
+        };
+        let routes = HttpTransport::build_routes().expect("routes");
+        HttpTransport {
+            routes,
+            preferred_route: AtomicUsize::new(0),
+            base_url: "https://example.invalid/v1".to_string(),
+            model: "model".to_string(),
+            credential,
+            auth,
+        }
+    }
+
+    fn fresh_request_builder() -> reqwest::RequestBuilder {
+        reqwest::Client::new().get("https://example.invalid/v1/test")
+    }
+
+    fn build(req: reqwest::RequestBuilder) -> reqwest::Request {
+        req.build().expect("request")
+    }
+
+    #[test]
+    fn apply_auth_with_no_secret_leaves_request_unchanged() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "bearer".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: None,
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            None,
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        assert!(request.headers().get("authorization").is_none());
+        assert!(!request.url().query().unwrap_or("").contains("api_key"));
+    }
+
+    #[test]
+    fn apply_auth_query_param_attaches_param() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "query_param".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: Some("api_key".to_string()),
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            Some("kp-secret"),
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        let query = request.url().query().expect("query");
+        assert!(
+            query.contains("api_key=kp-secret"),
+            "expected api_key=kp-secret in query, got {query}"
+        );
+        assert!(request.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn apply_auth_unknown_type_falls_back_to_bearer() {
+        let transport = transport_with(
+            Some(AuthConfig {
+                auth_type: "totally_made_up_auth".to_string(),
+                token_env: None,
+                key_env: None,
+                param_name: None,
+                header_name: None,
+                prefix: None,
+                extra_headers: None,
+            }),
+            Some("ut-secret"),
+        );
+        let request = build(transport.apply_auth(fresh_request_builder()));
+        let auth_header = request
+            .headers()
+            .get("authorization")
+            .expect("authorization header set");
+        assert_eq!(auth_header, "Bearer ut-secret");
+    }
+}
