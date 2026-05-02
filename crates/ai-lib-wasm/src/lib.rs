@@ -27,7 +27,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use ai_lib_core::credentials::{conventional_envs, provider_id, required_envs};
+// credentials helpers inlined below (credentials module is #[cfg(not(target_arch = "wasm32"))])
 use ai_lib_core::drivers::{create_driver, DriverResponse, ProviderDriver};
 use ai_lib_core::error_code::StandardErrorCode;
 use ai_lib_core::protocol::v2::capabilities::{CapabilitiesV2, Capability, LegacyCapabilities};
@@ -830,6 +830,29 @@ unsafe fn ailib_invoke_classify_error(
     ailib_classify_error(status, input_ptr, input_len)
 }
 
+fn wasm_required_envs(manifest: &ProtocolManifest) -> Vec<String> {
+    let Some(auth) = manifest.endpoint.as_ref().and_then(|e| e.auth.as_ref()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Some(env) = auth.token_env.as_ref().or(auth.key_env.as_ref()) {
+        let trimmed = env.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
+fn wasm_provider_id(manifest: &ProtocolManifest) -> &str {
+    manifest.provider_id.as_deref().unwrap_or(&manifest.id)
+}
+
+fn wasm_conventional_envs(provider_id: &str) -> Vec<String> {
+    let normalized = provider_id.to_uppercase().replace('-', "_");
+    vec![format!("{normalized}_API_KEY")]
+}
+
 unsafe fn ailib_invoke_resolve_credential(
     ctx: &InvokeCtx,
     input_ptr: *const u8,
@@ -886,8 +909,8 @@ unsafe fn ailib_invoke_resolve_credential(
             return -1;
         }
     };
-    let required = required_envs(manifest);
-    let conventional_fallbacks = conventional_envs(provider_id(manifest));
+    let required = wasm_required_envs(manifest);
+    let conventional_fallbacks = wasm_conventional_envs(wasm_provider_id(manifest));
     let has_explicit = input
         .explicit_credential
         .as_deref()
