@@ -42,6 +42,12 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
+
+      - name: cargo build ai-lib-wasm (wasm)
+        run: cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
+
       - name: cargo test workspace (lib + tests)
         env:
           AI_PROTOCOL_DIR: ${{ github.workspace }}/ai-protocol
@@ -86,20 +92,21 @@ jobs:
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pr_number,
-              body: `## Merge Gate
-
-All **feature-branch** checks passed for \`${sha}\` (push to \`${context.ref.replace('refs/heads/', '')}\`).
-
-| Check | Status |
-|-------|--------|
-| cargo fmt | ok |
-| cargo clippy (-D warnings) | ok |
-| cargo test --workspace --lib --tests (with ai-protocol) | ok |
-| cargo build -p ai-lib-core --no-default-features | ok |
-
-Waiting for Spider final review and merge.
-
-`,
+              body: [
+                '## Merge Gate',
+                '',
+                'All **feature-branch** checks passed for `' + sha + '` (push to `' + context.ref.replace("refs/heads/", "") + '`).',
+                '',
+                '| Check | Status |',
+                '|-------|--------|',
+                '| cargo fmt | ok |',
+                '| cargo clippy (-D warnings) | ok |',
+                '| cargo test --workspace --lib --tests (with ai-protocol) | ok |',
+                '| cargo build -p ai-lib-core --no-default-features | ok |',
+                '',
+                'Waiting for Spider final review and merge.',
+                '',
+              ].join('\\n'),
             });
             try {
               await github.rest.issues.addLabels({
