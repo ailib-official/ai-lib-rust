@@ -27,6 +27,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
+use ai_lib_core::credentials::{conventional_envs, provider_id, required_envs};
 use ai_lib_core::drivers::{create_driver, DriverResponse, ProviderDriver};
 use ai_lib_core::error_code::StandardErrorCode;
 use ai_lib_core::protocol::v2::capabilities::{CapabilitiesV2, Capability, LegacyCapabilities};
@@ -555,6 +556,7 @@ fn capabilities_json() -> &'static [u8] {
                     "parse_response",
                     "classify_error",
                     "extract_usage",
+                    "resolve_credential",
                     "snapshot_state",
                     "restore_state",
                     "metrics"
@@ -568,7 +570,8 @@ fn capabilities_json() -> &'static [u8] {
                 "features": {
                     "structured_input": true,
                     "additive_ctx": true,
-                    "state_migration": true
+                    "state_migration": true,
+                    "host_supplied_credentials": true
                 }
             });
             serde_json::to_vec(&v).expect("serialize static capabilities")
@@ -698,6 +701,7 @@ pub unsafe extern "C" fn ailib_invoke(
         "parse_response" => ailib_invoke_parse_response(&ctx, input_ptr, input_len),
         "classify_error" => ailib_invoke_classify_error(&ctx, input_ptr, input_len),
         "extract_usage" => ailib_extract_usage(input_ptr, input_len),
+        "resolve_credential" => ailib_invoke_resolve_credential(&ctx, input_ptr, input_len),
         "snapshot_state" => ailib_snapshot_state_inner(),
         "restore_state" => ailib_restore_state_inner(input_ptr, input_len),
         other => {
@@ -824,6 +828,104 @@ unsafe fn ailib_invoke_classify_error(
         }
     };
     ailib_classify_error(status, input_ptr, input_len)
+}
+
+unsafe fn ailib_invoke_resolve_credential(
+    ctx: &InvokeCtx,
+    input_ptr: *const u8,
+    input_len: usize,
+) -> i32 {
+    #[derive(Deserialize)]
+    struct In {
+        #[serde(default)]
+        handle: Option<u32>,
+        #[serde(default)]
+        explicit_credential: Option<String>,
+    }
+    #[derive(Serialize)]
+    struct Out {
+        status: &'static str,
+        source_kind: &'static str,
+        source_name: Option<&'static str>,
+        required: Vec<String>,
+        conventional_fallbacks: Vec<String>,
+        implicit_env_allowed: bool,
+        implicit_keyring_allowed: bool,
+        value_redacted: bool,
+    }
+
+    let input: In = match parse_input_json(input_ptr, input_len) {
+        Ok(v) => v,
+        Err(e) => {
+            set_err(e);
+            return -1;
+        }
+    };
+    let handle = match input.handle.or(ctx.manifest_handle) {
+        Some(h) => h,
+        None => {
+            set_err("resolve_credential: missing manifest handle (in ctx or input)");
+            return -1;
+        }
+    };
+    let g = match MANIFESTS.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            set_err(e.to_string());
+            return -1;
+        }
+    };
+    let manifest = match handle
+        .checked_sub(1)
+        .and_then(|i| g.get(i as usize))
+        .and_then(|x| x.as_ref())
+    {
+        Some((m, _)) => m,
+        None => {
+            set_err("invalid manifest handle");
+            return -1;
+        }
+    };
+    let required = required_envs(manifest);
+    let conventional_fallbacks = conventional_envs(provider_id(manifest));
+    let has_explicit = input
+        .explicit_credential
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let out = if has_explicit {
+        Out {
+            status: "available",
+            source_kind: "explicit",
+            source_name: Some("host_supplied"),
+            required,
+            conventional_fallbacks,
+            implicit_env_allowed: false,
+            implicit_keyring_allowed: false,
+            value_redacted: true,
+        }
+    } else {
+        Out {
+            status: "missing",
+            source_kind: "none",
+            source_name: None,
+            required,
+            conventional_fallbacks,
+            implicit_env_allowed: false,
+            implicit_keyring_allowed: false,
+            value_redacted: true,
+        }
+    };
+    match serde_json::to_vec(&out) {
+        Ok(v) => {
+            set_out(v);
+            0
+        }
+        Err(e) => {
+            set_err(e.to_string());
+            -1
+        }
+    }
 }
 
 fn parse_input_json<T: for<'de> Deserialize<'de>>(ptr: *const u8, len: usize) -> Result<T, String> {
@@ -1068,7 +1170,29 @@ capabilities:
 status: stable
 category: ai_provider
 official_url: https://example.com
-support_contact: support@example.com
+support_contact: https://example.com/support
+parameter_mappings: {}
+"#;
+
+    const CREDENTIAL_MANIFEST_YAML: &str = r#"---
+id: replicate
+name: Replicate Credential Mock
+version: "1.0.0"
+protocol_version: "2.0"
+endpoint:
+  base_url: https://api.replicate.example/v1
+  chat: /chat/completions
+  auth:
+    type: bearer
+    token_env: REPLICATE_API_TOKEN
+capabilities:
+  streaming: false
+  tools: false
+  vision: false
+status: stable
+category: ai_provider
+official_url: https://example.com
+support_contact: https://example.com/support
 parameter_mappings: {}
 "#;
 
@@ -1116,6 +1240,7 @@ parameter_mappings: {}
             "build_request",
             "parse_response",
             "classify_error",
+            "resolve_credential",
             "load_manifest",
             "snapshot_state",
             "restore_state",
@@ -1220,6 +1345,71 @@ parameter_mappings: {}
         assert_eq!(invoke("metrics", None, None), 0);
         let m: WasmMetrics = serde_json::from_slice(&read_out()).unwrap();
         assert!(m.total_calls >= 1);
+    }
+
+    #[test]
+    fn test_ailib_invoke_resolve_credential_uses_host_supplied_only() {
+        let _g = test_lock();
+        reset_state();
+        std::env::set_var("REPLICATE_API_TOKEN", "host-env-token-ignored-by-wasm");
+        let h = unsafe {
+            ailib_load_manifest(
+                CREDENTIAL_MANIFEST_YAML.as_ptr(),
+                CREDENTIAL_MANIFEST_YAML.len(),
+            )
+        };
+        assert!(h >= 1, "load_manifest failed: {}", read_err());
+        let input = br#"{"explicit_credential":"host-supplied-token"}"#;
+        let ctx = format!(r#"{{"version": 2, "manifest_handle": {}}}"#, h);
+        assert_eq!(
+            invoke("resolve_credential", Some(input), Some(ctx.as_bytes())),
+            0,
+            "err={}",
+            read_err()
+        );
+        let out_bytes = read_out();
+        let out: serde_json::Value = serde_json::from_slice(&out_bytes).unwrap();
+        assert_eq!(out["status"], "available");
+        assert_eq!(out["source_kind"], "explicit");
+        assert_eq!(out["source_name"], "host_supplied");
+        assert_eq!(out["required"][0], "REPLICATE_API_TOKEN");
+        assert_eq!(out["implicit_env_allowed"], false);
+        assert_eq!(out["implicit_keyring_allowed"], false);
+        let public = String::from_utf8(out_bytes).unwrap();
+        assert!(!public.contains("host-supplied-token"));
+        assert!(!public.contains("host-env-token-ignored-by-wasm"));
+        std::env::remove_var("REPLICATE_API_TOKEN");
+    }
+
+    #[test]
+    fn test_ailib_invoke_resolve_credential_ignores_env_without_explicit() {
+        let _g = test_lock();
+        reset_state();
+        std::env::set_var("REPLICATE_API_TOKEN", "host-env-token-ignored-by-wasm");
+        let h = unsafe {
+            ailib_load_manifest(
+                CREDENTIAL_MANIFEST_YAML.as_ptr(),
+                CREDENTIAL_MANIFEST_YAML.len(),
+            )
+        };
+        assert!(h >= 1, "load_manifest failed: {}", read_err());
+        let input = br#"{}"#;
+        let ctx = format!(r#"{{"version": 2, "manifest_handle": {}}}"#, h);
+        assert_eq!(
+            invoke("resolve_credential", Some(input), Some(ctx.as_bytes())),
+            0,
+            "err={}",
+            read_err()
+        );
+        let out_bytes = read_out();
+        let out: serde_json::Value = serde_json::from_slice(&out_bytes).unwrap();
+        assert_eq!(out["status"], "missing");
+        assert_eq!(out["source_kind"], "none");
+        assert_eq!(out["implicit_env_allowed"], false);
+        assert_eq!(out["implicit_keyring_allowed"], false);
+        let public = String::from_utf8(out_bytes).unwrap();
+        assert!(!public.contains("host-env-token-ignored-by-wasm"));
+        std::env::remove_var("REPLICATE_API_TOKEN");
     }
 
     // ---- WASM-002: memory management ------------------------------------
