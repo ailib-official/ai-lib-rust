@@ -42,6 +42,12 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Install wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
+
+      - name: cargo build ai-lib-wasm (wasm)
+        run: cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
+
       - name: cargo test workspace (lib + tests)
         env:
           AI_PROTOCOL_DIR: ${{ github.workspace }}/ai-protocol
