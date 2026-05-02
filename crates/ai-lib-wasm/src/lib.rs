@@ -831,7 +831,7 @@ unsafe fn ailib_invoke_classify_error(
 }
 
 fn wasm_required_envs(manifest: &ProtocolManifest) -> Vec<String> {
-    let Some(auth) = manifest.endpoint.as_ref().and_then(|e| e.auth.as_ref()) else {
+    let Some(auth) = manifest.endpoint.auth.as_ref().or(manifest.auth.as_ref()) else {
         return Vec::new();
     };
     let mut out = Vec::new();
