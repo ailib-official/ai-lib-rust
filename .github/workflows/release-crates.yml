@@ -1,0 +1,61 @@
+# Publish workspace crates to crates.io on annotated tags `v*`.
+# Publish order: ai-lib-core -> ai-lib-contact -> ai-lib-rust (facade).
+#
+# Prereqs:
+#   - Repo secret CARGO_REGISTRY_TOKEN (crates.io API token with publish scope).
+#   - Tag must point at a commit where crate versions in Cargo.toml match the tag (e.g. tag v0.9.6 <-> version 0.9.6).
+#   - Workspace dependency version fields must match published core before contact/rust publish.
+#
+# Note: `ai-lib-wasm` has publish = false and is skipped.
+
+name: Release crates
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Dry-run (sanity)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cargo publish -p ai-lib-core --dry-run
+          cargo publish -p ai-lib-contact --dry-run
+          cargo publish -p ai-lib-rust --dry-run
+
+      - name: Publish ai-lib-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ai-lib-core --locked
+
+      - name: Wait for crates.io index
+        run: sleep 45
+
+      - name: Publish ai-lib-contact
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ai-lib-contact --locked
+
+      - name: Wait for crates.io index
+        run: sleep 45
+
+      - name: Publish ai-lib-rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ai-lib-rust --locked
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
