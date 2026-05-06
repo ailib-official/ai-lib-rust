@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-contact"
-version = "0.9.4"
+version = "0.9.6"
 dependencies = [
  "ai-lib-core",
  "async-trait",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-core"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-rust"
-version = "0.9.4"
+version = "0.9.6"
 dependencies = [
  "ai-lib-contact",
  "ai-lib-core",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-wasm"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "ai-lib-core",
  "serde",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "ai-lib-wasmtime-harness"
-version = "0.9.4"
+version = "0.9.6"
 dependencies = [
  "serde_json",
  "wasmtime",

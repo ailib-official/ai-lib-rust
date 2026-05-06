@@ -1,5 +1,9 @@
 # Changelog — `ai-lib-wasm`
 
+## 0.9.6
+
+- Workspace version alignment with `ai-lib-core` 0.9.6 / release train (crate remains `publish = false`).
+
 ## 0.9.5
 
 - WASM-001: `ailib_abi_version`, `ailib_capabilities_*`, unified `ailib_invoke` dispatcher; v1 exports retained.

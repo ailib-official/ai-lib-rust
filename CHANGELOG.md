@@ -16,6 +16,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.9.6 - 2026-05-07
+
 ### Added
 
 - **Credential chain (PT-074)**: `ai-lib-core` now resolves protocol credentials with explicit builder override, manifest-declared env vars, conventional provider env fallback, and (when the `keyring` feature is enabled) native OS keyring fallback.
@@ -28,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - **Credential auth is single-source (PT-074-B-FIX-2)**: `credentials::required_envs()` now scans only the active `primary_auth()` block (V2 `endpoint.auth` wins, V1 top-level `auth` is the fallback). This prevents a "V1 token + V2 attachment shape" Frankenstein resolution when both blocks are declared with divergent envs.
 - **Conventional env var is canonical (PT-074-B-FIX-2)**: `credentials::conventional_envs()` returns a single `${PROVIDER_ID_UPPER_WITH_UNDERSCORES}_API_KEY` entry. Non-conventional aliases must be declared via `auth.token_env` / `auth.key_env` in the manifest.
 - **`AuthConfig` field name aligned with V2 schema (PT-074-B-FIX-4)**: the custom auth header field now serializes as `header` (V2 canonical name) and accepts `header_name` only as a V1 compatibility deserialize alias. The Rust struct identifier `header_name` is unchanged.
+- **Workspace crate versions** aligned to `0.9.6` for a coherent crates.io publish train (`ai-lib-core` → `ai-lib-contact` → `ai-lib-rust`).
 
 ### Diagnostics
 
