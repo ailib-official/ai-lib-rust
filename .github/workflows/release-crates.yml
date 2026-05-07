@@ -26,13 +26,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Dry-run (sanity)
+      - name: Dry-run ai-lib-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cargo publish -p ai-lib-core --dry-run
-          cargo publish -p ai-lib-contact --dry-run
-          cargo publish -p ai-lib-rust --dry-run
+        run: cargo publish -p ai-lib-core --dry-run
 
       - name: Publish ai-lib-core
         env:
@@ -42,6 +39,11 @@ jobs:
       - name: Wait for crates.io index
         run: sleep 45
 
+      - name: Dry-run ai-lib-contact
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ai-lib-contact --dry-run
+
       - name: Publish ai-lib-contact
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -49,6 +51,11 @@ jobs:
 
       - name: Wait for crates.io index
         run: sleep 45
+
+      - name: Dry-run ai-lib-rust
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p ai-lib-rust --dry-run
 
       - name: Publish ai-lib-rust
         env:
