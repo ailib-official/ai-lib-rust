@@ -42,7 +42,11 @@ impl ContextBudget {
     pub const DEFAULT_FALLBACK_INPUT: u32 = 24_000;
     pub const DEFAULT_FALLBACK_OUTPUT_RESERVE: u32 = 4_096;
 
-    pub fn new(max_input_tokens: u32, reserve_output_tokens: u32, min_tail_messages: usize) -> Self {
+    pub fn new(
+        max_input_tokens: u32,
+        reserve_output_tokens: u32,
+        min_tail_messages: usize,
+    ) -> Self {
         Self {
             max_input_tokens,
             reserve_output_tokens,

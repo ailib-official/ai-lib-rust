@@ -171,6 +171,7 @@ fn extend_for_tool_chain(messages: &[Message], start: usize, end: usize, budget:
     trim_leading_orphan_tools(messages, start, end)
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use ai_lib_core::types::message::Message;
@@ -191,11 +192,7 @@ mod tests {
         let report = MessageAssembler::assemble(&messages, &opts(120, 1)).unwrap();
         assert!(report.dropped_prefix > 0);
         assert!(!report.messages.is_empty());
-        let tokens: u32 = report
-            .messages
-            .iter()
-            .map(estimate_message_tokens)
-            .sum();
+        let tokens: u32 = report.messages.iter().map(estimate_message_tokens).sum();
         assert!(tokens <= 200);
     }
 
