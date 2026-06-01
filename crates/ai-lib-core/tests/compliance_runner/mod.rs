@@ -263,7 +263,11 @@ fn capability_profile_phase_errors(manifest: &Value) -> Vec<String> {
     errors
 }
 
-fn run_protocol_loading(tc: &TestCase, compliance_dir: &Path) -> Result<(), Vec<String>> {
+fn run_protocol_loading(
+    tc: &TestCase,
+    compliance_dir: &Path,
+    case_dir: &Path,
+) -> Result<(), Vec<String>> {
     let mut failures = Vec::new();
     let manifest_rel = tc
         .input
@@ -274,7 +278,14 @@ fn run_protocol_loading(tc: &TestCase, compliance_dir: &Path) -> Result<(), Vec<
         return Err(vec!["protocol_loading requires manifest_path".to_string()]);
     };
 
-    let manifest_path = compliance_dir.join(manifest_rel);
+    let manifest_path = {
+        let from_case = case_dir.join(manifest_rel);
+        if from_case.exists() {
+            from_case
+        } else {
+            compliance_dir.join(manifest_rel)
+        }
+    };
     let raw = fs::read_to_string(&manifest_path).map_err(|e| {
         vec![format!(
             "failed to read manifest {}: {}",
@@ -1132,7 +1143,8 @@ fn compliance_protocol_loading() {
                 continue;
             }
 
-            match run_protocol_loading(&tc, &compliance_dir) {
+            let case_dir = file.parent().unwrap_or(&loading_dir);
+            match run_protocol_loading(&tc, &compliance_dir, case_dir) {
                 Ok(()) => {
                     println!("  [PASS] {} ({})", tc.id, tc.name);
                     passed += 1;
