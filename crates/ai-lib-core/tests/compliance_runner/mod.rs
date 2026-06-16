@@ -4,6 +4,8 @@
 //! `tests/compliance` directory. `classify_error_from_response` comes from `ai-lib-core::client`.
 
 use ai_lib_core::client::classify_error_from_response;
+use ai_lib_core::protocol::v2::ManifestV2;
+use ai_lib_core::protocol::ProtocolManifest;
 use serde::Deserialize;
 use serde_yaml::Value;
 use std::collections::{HashMap, HashSet};
@@ -73,6 +75,8 @@ struct TestExpected {
     retryable: Option<bool>,
     #[serde(default)]
     fallbackable: Option<bool>,
+    #[serde(default)]
+    runtime_deserialize: Option<bool>,
     #[serde(flatten)]
     extra: HashMap<String, Value>,
 }
@@ -348,6 +352,21 @@ fn run_protocol_loading(
                     "protocol_version: expected {}, got {}",
                     expected_protocol_version, got
                 ));
+            }
+        }
+
+        if tc.expected.runtime_deserialize == Some(true) {
+            let protocol_version = manifest
+                .get("protocol_version")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let parse_err = if protocol_version.starts_with('2') {
+                serde_yaml::from_str::<ManifestV2>(&raw).err()
+            } else {
+                serde_yaml::from_str::<ProtocolManifest>(&raw).err()
+            };
+            if let Some(err) = parse_err {
+                failures.push(format!("runtime_deserialize: {}", err));
             }
         }
     }

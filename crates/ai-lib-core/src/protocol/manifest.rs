@@ -87,6 +87,10 @@ pub struct ProtocolManifest {
     pub experimental_features: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_profile: Option<serde_json::Value>,
+
+    /// Catch-all for forward compatibility — unknown manifest keys land here.
+    #[serde(default, flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 impl ProtocolManifest {

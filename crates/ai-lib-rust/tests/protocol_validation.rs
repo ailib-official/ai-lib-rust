@@ -206,3 +206,25 @@ async fn test_loader_falls_back_to_v1_when_v2_missing() {
 
     let _ = std::fs::remove_dir_all(&temp_root);
 }
+
+#[tokio::test]
+async fn test_unknown_top_level_fields_tolerance() {
+    let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
+        .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
+        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+    let fixture = std::path::Path::new(&protocol_dir).join(
+        "tests/compliance/fixtures/providers/mock-forward-compat-unknown-fields-v2.yaml",
+    );
+    assert!(
+        fixture.exists(),
+        "forward-compat fixture missing at {}",
+        fixture.display()
+    );
+
+    let raw = std::fs::read_to_string(&fixture).expect("read fixture");
+    let manifest: ai_lib_rust::protocol::v2::ManifestV2 =
+        serde_yaml::from_str(&raw).expect("v2 manifest with unknown fields should parse");
+    assert_eq!(manifest.id, "google");
+    assert!(manifest.extra.contains_key("reasoning_effort"));
+    assert!(manifest.extra.contains_key("future_extension_flag"));
+}
