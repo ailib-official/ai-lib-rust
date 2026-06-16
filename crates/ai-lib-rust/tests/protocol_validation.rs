@@ -6,7 +6,16 @@ use ai_lib_rust::protocol::{ProtocolError, ProtocolLoader};
 async fn test_valid_provider_manifest() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
-        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                "D:\\ai-protocol".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                "../ai-protocol".to_string()
+            }
+        });
     std::env::set_var("AI_PROTOCOL_DIR", &protocol_dir);
 
     let loader = ProtocolLoader::new().with_base_path(&protocol_dir);
@@ -24,7 +33,16 @@ async fn test_valid_provider_manifest() {
 async fn test_invalid_yaml_structure() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
-        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                "D:\\ai-protocol".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                "../ai-protocol".to_string()
+            }
+        });
     std::env::set_var("AI_PROTOCOL_DIR", &protocol_dir);
 
     // Create a temporary invalid manifest file
@@ -98,7 +116,16 @@ protocol_version: "1.1"
 async fn test_all_providers_valid() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
-        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                "D:\\ai-protocol".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                "../ai-protocol".to_string()
+            }
+        });
     std::env::set_var("AI_PROTOCOL_DIR", &protocol_dir);
 
     let loader = ProtocolLoader::new().with_base_path(&protocol_dir);
@@ -178,7 +205,16 @@ async fn test_loader_prefers_v2_provider_over_v1() {
 async fn test_loader_falls_back_to_v1_when_v2_missing() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
-        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                "D:\\ai-protocol".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                "../ai-protocol".to_string()
+            }
+        });
     let src_v1 = std::path::Path::new(&protocol_dir)
         .join("dist")
         .join("v1")
@@ -211,7 +247,16 @@ async fn test_loader_falls_back_to_v1_when_v2_missing() {
 async fn test_unknown_top_level_fields_tolerance() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
-        .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
+        .unwrap_or_else(|_| {
+            #[cfg(windows)]
+            {
+                "D:\\ai-protocol".to_string()
+            }
+            #[cfg(not(windows))]
+            {
+                "../ai-protocol".to_string()
+            }
+        });
     let fixture = std::path::Path::new(&protocol_dir)
         .join("tests/compliance/fixtures/providers/mock-forward-compat-unknown-fields-v2.yaml");
     assert!(
