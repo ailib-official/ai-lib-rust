@@ -212,9 +212,8 @@ async fn test_unknown_top_level_fields_tolerance() {
     let protocol_dir = std::env::var("AI_PROTOCOL_DIR")
         .or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
         .unwrap_or_else(|_| "D:\\ai-protocol".to_string());
-    let fixture = std::path::Path::new(&protocol_dir).join(
-        "tests/compliance/fixtures/providers/mock-forward-compat-unknown-fields-v2.yaml",
-    );
+    let fixture = std::path::Path::new(&protocol_dir)
+        .join("tests/compliance/fixtures/providers/mock-forward-compat-unknown-fields-v2.yaml");
     assert!(
         fixture.exists(),
         "forward-compat fixture missing at {}",
