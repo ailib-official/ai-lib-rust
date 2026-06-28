@@ -40,9 +40,7 @@ impl AnthropicDriver {
 
     /// Extract system message and non-system messages separately.
     /// Anthropic requires system as a top-level param, not in messages array.
-    fn split_system_messages(
-        messages: &[Message],
-    ) -> Result<(Option<String>, Vec<Value>), Error> {
+    fn split_system_messages(messages: &[Message]) -> Result<(Option<String>, Vec<Value>), Error> {
         let mut system_parts: Vec<String> = Vec::new();
         let mut user_messages: Vec<Value> = Vec::new();
 
