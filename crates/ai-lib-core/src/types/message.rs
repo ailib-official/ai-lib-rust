@@ -75,6 +75,15 @@ impl Message {
             }
         }
     }
+
+    pub fn contains_document(&self) -> bool {
+        match &self.content {
+            MessageContent::Text(_) => false,
+            MessageContent::Blocks(bs) => bs
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Document { .. })),
+        }
+    }
 }
 
 /// Message role
@@ -116,6 +125,8 @@ pub enum ContentBlock {
     Image { source: ImageSource },
     #[serde(rename = "audio")]
     Audio { source: AudioSource },
+    #[serde(rename = "document")]
+    Document { source: DocumentSource },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -147,6 +158,18 @@ pub struct AudioSource {
     pub data: String, // base64 encoded or URL
 }
 
+/// Document attachment source (PDF and other provider-native document types).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+}
+
 impl ContentBlock {
     pub fn text(text: impl Into<String>) -> Self {
         ContentBlock::Text { text: text.into() }
@@ -168,6 +191,36 @@ impl ContentBlock {
                 source_type: "base64".to_string(),
                 media_type,
                 data,
+            },
+        }
+    }
+
+    pub fn document_base64(
+        data: String,
+        mime_type: Option<String>,
+        filename: Option<String>,
+    ) -> Self {
+        ContentBlock::Document {
+            source: DocumentSource {
+                source_type: "base64".to_string(),
+                mime_type,
+                data,
+                filename,
+            },
+        }
+    }
+
+    pub fn document_ref(
+        document_ref: String,
+        mime_type: Option<String>,
+        filename: Option<String>,
+    ) -> Self {
+        ContentBlock::Document {
+            source: DocumentSource {
+                source_type: "ref".to_string(),
+                mime_type,
+                data: document_ref,
+                filename,
             },
         }
     }
@@ -200,6 +253,7 @@ fn guess_media_type(path: &Path) -> Option<String> {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "gif" => "image/gif",
+        "pdf" => "application/pdf",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "ogg" => "audio/ogg",
@@ -232,5 +286,32 @@ mod tests {
         assert_eq!(json["role"], "tool");
         assert_eq!(json["content"], "result");
         assert_eq!(json["tool_call_id"], "call_xyz");
+    }
+
+    #[test]
+    fn test_document_block_serialization() {
+        let block = ContentBlock::document_base64(
+            "abc".into(),
+            Some("application/pdf".into()),
+            Some("notes.pdf".into()),
+        );
+        let json = serde_json::to_value(&block).unwrap();
+        assert_eq!(json["type"], "document");
+        assert_eq!(json["source"]["type"], "base64");
+        assert_eq!(json["source"]["mime_type"], "application/pdf");
+        assert_eq!(json["source"]["filename"], "notes.pdf");
+    }
+
+    #[test]
+    fn test_message_contains_document() {
+        let msg = Message::with_content(
+            MessageRole::User,
+            MessageContent::blocks(vec![
+                ContentBlock::text("read this"),
+                ContentBlock::document_ref("upload://1".into(), None, None),
+            ]),
+        );
+        assert!(msg.contains_document());
+        assert!(!Message::user("plain").contains_document());
     }
 }

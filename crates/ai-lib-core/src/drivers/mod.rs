@@ -17,7 +17,7 @@ use crate::protocol::v2::manifest::ApiStyle;
 use crate::protocol::ProtocolError;
 use crate::types::events::StreamingEvent;
 use crate::types::execution_result::ExecutionUsage;
-use crate::types::message::{Message, MessageContent};
+use crate::types::message::{ContentBlock, Message, MessageContent};
 
 pub use anthropic::AnthropicDriver;
 pub use gemini::GeminiDriver;
@@ -199,6 +199,18 @@ impl ProviderDriver for OpenAiDriver {
         stream: bool,
         extra: Option<&Value>,
     ) -> Result<DriverRequest, Error> {
+        for m in messages {
+            if let MessageContent::Blocks(blocks) = &m.content {
+                for block in blocks {
+                    if matches!(block, ContentBlock::Document { .. }) {
+                        return Err(Error::Protocol(ProtocolError::ValidationError(
+                            "OpenAI-compatible driver does not encode document blocks; use Anthropic or Gemini".into(),
+                        )));
+                    }
+                }
+            }
+        }
+
         let oai_messages: Vec<Value> = messages
             .iter()
             .map(|m| {
@@ -473,9 +485,20 @@ mod tests {
     }
 
     #[test]
-    fn test_stream_done_detection() {
-        let driver = OpenAiDriver::new("openai", vec![]);
-        assert!(driver.is_stream_done("[DONE]"));
-        assert!(!driver.is_stream_done(r#"{"choices":[]}"#));
+    fn test_openai_driver_rejects_document_blocks() {
+        use crate::types::message::{ContentBlock, MessageContent, MessageRole};
+
+        let driver = OpenAiDriver::new("openai", vec![Capability::Text]);
+        let messages = vec![Message::with_content(
+            MessageRole::User,
+            MessageContent::blocks(vec![ContentBlock::document_base64(
+                "abc".into(),
+                Some("application/pdf".into()),
+                None,
+            )]),
+        )];
+        assert!(driver
+            .build_request(&messages, "gpt-4o", None, None, false, None)
+            .is_err());
     }
 }

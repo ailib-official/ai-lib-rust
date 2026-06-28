@@ -29,6 +29,7 @@ fn estimate_block_tokens(block: &ContentBlock) -> u32 {
         ContentBlock::Text { text } => estimate_tokens(text),
         ContentBlock::Image { source } => estimate_tokens(&source.data),
         ContentBlock::Audio { source } => estimate_tokens(&source.data),
+        ContentBlock::Document { source } => estimate_tokens(&source.data),
         ContentBlock::ToolUse { id, name, input } => {
             estimate_tokens(id) + estimate_tokens(name) + estimate_tokens(&input.to_string())
         }
