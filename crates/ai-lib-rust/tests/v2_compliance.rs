@@ -362,4 +362,33 @@ multimodal:
         let err = validate_content_modalities(&blocks_video, &caps).unwrap_err();
         assert!(err.contains(&Modality::Video));
     }
+
+    /// Document blocks require manifest document_understanding.
+    #[test]
+    fn test_document_validation_requires_capability() {
+        let yaml = r#"
+id: test
+protocol_version: "2.0"
+endpoint:
+  base_url: https://example.com
+capabilities:
+  required: [text, vision]
+multimodal:
+  input:
+    vision:
+      supported: true
+      formats: [jpeg, png]
+      encoding_methods: [base64_inline]
+      document_understanding: true
+  output:
+    text: true
+"#;
+        let manifest: ManifestV2 = serde_yaml::from_str(yaml).unwrap();
+        let caps = MultimodalCapabilities::from_config(manifest.multimodal.as_ref().unwrap());
+        let blocks = vec![
+            serde_json::json!({"type": "document", "source": {"type": "base64", "data": "abc"}}),
+        ];
+        assert!(validate_content_modalities(&blocks, &caps).is_ok());
+        assert!(caps.supports_document_understanding());
+    }
 }

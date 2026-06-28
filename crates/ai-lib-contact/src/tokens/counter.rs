@@ -28,6 +28,9 @@ pub trait TokenCounter: Send + Sync {
                             ContentBlock::Audio { .. } => {
                                 total += 100;
                             }
+                            ContentBlock::Document { source } => {
+                                total += self.count(&source.data);
+                            }
                             ContentBlock::ToolUse { input, .. } => {
                                 total +=
                                     self.count(&serde_json::to_string(input).unwrap_or_default());

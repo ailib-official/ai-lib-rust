@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::protocol::v2::manifest::MultimodalConfig;
+use crate::types::message::ContentBlock;
+
+pub use crate::types::content_encode::{encode_blocks_for_anthropic, encode_blocks_for_gemini};
 
 /// Supported input/output modality types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -20,6 +23,7 @@ pub enum Modality {
     Image,
     Audio,
     Video,
+    Document,
 }
 
 impl Modality {
@@ -29,6 +33,7 @@ impl Modality {
             Self::Image => "image",
             Self::Audio => "audio",
             Self::Video => "video",
+            Self::Document => "document",
         }
     }
 }
@@ -42,6 +47,7 @@ impl std::str::FromStr for Modality {
             "image" => Ok(Self::Image),
             "audio" => Ok(Self::Audio),
             "video" => Ok(Self::Video),
+            "document" => Ok(Self::Document),
             _ => Err(format!("Unknown modality: {}", s)),
         }
     }
@@ -59,6 +65,7 @@ pub struct MultimodalCapabilities {
     pub max_audio_duration: Option<String>,
     pub supports_omni: bool,
     pub supports_realtime_voice: bool,
+    pub document_understanding: bool,
 }
 
 impl MultimodalCapabilities {
@@ -71,6 +78,7 @@ impl MultimodalCapabilities {
         let mut video_formats = Vec::new();
         let mut max_image_size = None;
         let mut max_audio_duration = None;
+        let mut document_understanding = false;
 
         input_modalities.insert(Modality::Text);
         output_modalities.insert(Modality::Text);
@@ -81,6 +89,10 @@ impl MultimodalCapabilities {
                     input_modalities.insert(Modality::Image);
                     image_formats = vision.formats.clone();
                     max_image_size = vision.max_file_size.clone();
+                    if vision.document_understanding {
+                        document_understanding = true;
+                        input_modalities.insert(Modality::Document);
+                    }
                 }
             }
             if let Some(audio) = &input.audio {
@@ -140,7 +152,13 @@ impl MultimodalCapabilities {
             max_audio_duration,
             supports_omni,
             supports_realtime_voice,
+            document_understanding,
         }
+    }
+
+    /// Whether the provider accepts native document blocks (PDF, etc.).
+    pub fn supports_document_understanding(&self) -> bool {
+        self.document_understanding
     }
 
     /// Check if a given input modality is supported.
@@ -202,6 +220,9 @@ pub fn detect_modalities(content_blocks: &[serde_json::Value]) -> HashSet<Modali
                 "video" => {
                     modalities.insert(Modality::Video);
                 }
+                "document" => {
+                    modalities.insert(Modality::Document);
+                }
                 _ => {}
             }
         }
@@ -210,6 +231,15 @@ pub fn detect_modalities(content_blocks: &[serde_json::Value]) -> HashSet<Modali
         modalities.insert(Modality::Text);
     }
     modalities
+}
+
+/// Detect modalities from typed content blocks.
+pub fn detect_modalities_from_blocks(blocks: &[ContentBlock]) -> HashSet<Modality> {
+    let json: Vec<serde_json::Value> = blocks
+        .iter()
+        .filter_map(|b| serde_json::to_value(b).ok())
+        .collect();
+    detect_modalities(&json)
 }
 
 /// Validate that all modalities in content blocks are supported by the provider.
@@ -227,6 +257,18 @@ pub fn validate_content_modalities(
     } else {
         Err(unsupported)
     }
+}
+
+/// Validate typed content blocks against provider capabilities.
+pub fn validate_blocks_modalities(
+    blocks: &[ContentBlock],
+    caps: &MultimodalCapabilities,
+) -> Result<(), Vec<Modality>> {
+    let json: Vec<serde_json::Value> = blocks
+        .iter()
+        .filter_map(|b| serde_json::to_value(b).ok())
+        .collect();
+    validate_content_modalities(&json, caps)
 }
 
 #[cfg(test)]
@@ -328,5 +370,49 @@ mod tests {
         let blocks = vec![serde_json::json!({"type": "video", "source": {}})];
         let err = validate_content_modalities(&blocks, &caps).unwrap_err();
         assert!(err.contains(&Modality::Video));
+    }
+
+    #[test]
+    fn test_document_capability_from_config() {
+        let mut config = make_config();
+        config
+            .input
+            .as_mut()
+            .unwrap()
+            .vision
+            .as_mut()
+            .unwrap()
+            .document_understanding = true;
+        let caps = MultimodalCapabilities::from_config(&config);
+        assert!(caps.supports_document_understanding());
+        assert!(caps.supports_input(Modality::Document));
+    }
+
+    #[test]
+    fn test_validate_document_modalities_fail_without_capability() {
+        let caps = MultimodalCapabilities::from_config(&make_config());
+        let blocks = vec![
+            serde_json::json!({"type": "document", "source": {"type": "ref", "data": "upload://x"}}),
+        ];
+        let err = validate_content_modalities(&blocks, &caps).unwrap_err();
+        assert!(err.contains(&Modality::Document));
+    }
+
+    #[test]
+    fn test_validate_document_modalities_ok() {
+        let mut config = make_config();
+        config
+            .input
+            .as_mut()
+            .unwrap()
+            .vision
+            .as_mut()
+            .unwrap()
+            .document_understanding = true;
+        let caps = MultimodalCapabilities::from_config(&config);
+        let blocks = vec![
+            serde_json::json!({"type": "document", "source": {"type": "base64", "data": "abc"}}),
+        ];
+        assert!(validate_content_modalities(&blocks, &caps).is_ok());
     }
 }

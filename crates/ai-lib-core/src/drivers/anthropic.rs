@@ -19,6 +19,7 @@ use crate::types::events::StreamingEvent;
 use crate::types::message::{Message, MessageContent, MessageRole};
 
 use super::{DriverRequest, DriverResponse, ProviderDriver, UsageInfo};
+use crate::types::content_encode::encode_blocks_for_anthropic;
 
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
@@ -39,7 +40,9 @@ impl AnthropicDriver {
 
     /// Extract system message and non-system messages separately.
     /// Anthropic requires system as a top-level param, not in messages array.
-    fn split_system_messages(messages: &[Message]) -> (Option<String>, Vec<Value>) {
+    fn split_system_messages(
+        messages: &[Message],
+    ) -> Result<(Option<String>, Vec<Value>), Error> {
         let mut system_parts: Vec<String> = Vec::new();
         let mut user_messages: Vec<Value> = Vec::new();
 
@@ -72,8 +75,9 @@ impl AnthropicDriver {
                         MessageContent::Text(s) => {
                             serde_json::json!([{ "type": "text", "text": s }])
                         }
-                        MessageContent::Blocks(_) => {
-                            serde_json::to_value(&m.content).unwrap_or(Value::Null)
+                        MessageContent::Blocks(blocks) => {
+                            let encoded = encode_blocks_for_anthropic(blocks)?;
+                            serde_json::Value::Array(encoded)
                         }
                     };
                     user_messages.push(serde_json::json!({
@@ -90,7 +94,7 @@ impl AnthropicDriver {
             Some(system_parts.join("\n\n"))
         };
 
-        (system, user_messages)
+        Ok((system, user_messages))
     }
 }
 
@@ -113,7 +117,7 @@ impl ProviderDriver for AnthropicDriver {
         stream: bool,
         extra: Option<&Value>,
     ) -> Result<DriverRequest, Error> {
-        let (system, msgs) = Self::split_system_messages(messages);
+        let (system, msgs) = Self::split_system_messages(messages)?;
 
         let mut body = serde_json::json!({
             "model": model,
@@ -288,7 +292,7 @@ mod tests {
     #[test]
     fn test_system_message_extraction() {
         let msgs = vec![Message::system("You are helpful."), Message::user("Hi")];
-        let (sys, user_msgs) = AnthropicDriver::split_system_messages(&msgs);
+        let (sys, user_msgs) = AnthropicDriver::split_system_messages(&msgs).unwrap();
         assert_eq!(sys.as_deref(), Some("You are helpful."));
         assert_eq!(user_msgs.len(), 1);
         assert_eq!(user_msgs[0]["role"], "user");
@@ -367,5 +371,36 @@ mod tests {
             }
             _ => panic!("Expected PartialToolCall, got {:?}", event),
         }
+    }
+
+    #[test]
+    fn test_anthropic_document_block_encoding() {
+        use crate::types::message::{ContentBlock, MessageContent};
+
+        let driver = AnthropicDriver::new("anthropic", vec![Capability::Text]);
+        let messages = vec![Message::with_content(
+            MessageRole::User,
+            MessageContent::blocks(vec![
+                ContentBlock::text("Summarize"),
+                ContentBlock::document_base64(
+                    "JVBERi0xLjQK".into(),
+                    Some("application/pdf".into()),
+                    Some("paper.pdf".into()),
+                ),
+            ]),
+        )];
+        let req = driver
+            .build_request(
+                &messages,
+                "claude-sonnet-4-20250514",
+                None,
+                Some(1024),
+                false,
+                None,
+            )
+            .unwrap();
+        let content = &req.body["messages"][0]["content"];
+        assert_eq!(content[1]["type"], "document");
+        assert_eq!(content[1]["source"]["media_type"], "application/pdf");
     }
 }

@@ -20,6 +20,7 @@ use crate::types::events::StreamingEvent;
 use crate::types::message::{Message, MessageContent, MessageRole};
 
 use super::{DriverRequest, DriverResponse, ProviderDriver, UsageInfo};
+use crate::types::content_encode::encode_blocks_for_gemini;
 
 /// Google Gemini generateContent API driver.
 #[derive(Debug)]
@@ -38,7 +39,7 @@ impl GeminiDriver {
 
     /// Separate system instructions from conversation contents.
     /// Gemini uses `system_instruction` as a top-level field.
-    fn split_messages(messages: &[Message]) -> (Option<Value>, Vec<Value>) {
+    fn split_messages(messages: &[Message]) -> Result<(Option<Value>, Vec<Value>), Error> {
         let mut system_parts: Vec<String> = Vec::new();
         let mut contents: Vec<Value> = Vec::new();
 
@@ -68,7 +69,7 @@ impl GeminiDriver {
                         MessageRole::System => unreachable!(),
                         MessageRole::Tool => unreachable!(),
                     };
-                    let parts = Self::content_to_parts(&m.content);
+                    let parts = Self::content_to_parts(&m.content)?;
                     contents.push(serde_json::json!({
                         "role": role,
                         "parts": parts,
@@ -85,20 +86,14 @@ impl GeminiDriver {
             }))
         };
 
-        (system_instruction, contents)
+        Ok((system_instruction, contents))
     }
 
     /// Convert MessageContent to Gemini `parts` array.
-    fn content_to_parts(content: &MessageContent) -> Value {
+    fn content_to_parts(content: &MessageContent) -> Result<Value, Error> {
         match content {
-            MessageContent::Text(s) => {
-                serde_json::json!([{ "text": s }])
-            }
-            MessageContent::Blocks(_) => {
-                // For multimodal blocks, delegate to serde (needs further
-                // transformation for Gemini's inline_data format in Sprint 3).
-                serde_json::to_value(content).unwrap_or(Value::Null)
-            }
+            MessageContent::Text(s) => Ok(serde_json::json!([{ "text": s }])),
+            MessageContent::Blocks(blocks) => encode_blocks_for_gemini(blocks),
         }
     }
 }
@@ -122,7 +117,7 @@ impl ProviderDriver for GeminiDriver {
         _stream: bool,
         extra: Option<&Value>,
     ) -> Result<DriverRequest, Error> {
-        let (system_instruction, contents) = Self::split_messages(messages);
+        let (system_instruction, contents) = Self::split_messages(messages)?;
 
         let mut body = serde_json::json!({
             "contents": contents,
@@ -283,7 +278,7 @@ mod tests {
             Message::system("Be concise."),
             Message::user("Explain Rust."),
         ];
-        let (sys, contents) = GeminiDriver::split_messages(&msgs);
+        let (sys, contents) = GeminiDriver::split_messages(&msgs).unwrap();
         assert!(sys.is_some());
         assert_eq!(
             sys.unwrap()["parts"][0]["text"].as_str().unwrap(),
@@ -300,7 +295,7 @@ mod tests {
             Message::assistant("Hello!"),
             Message::user("How are you?"),
         ];
-        let (_, contents) = GeminiDriver::split_messages(&msgs);
+        let (_, contents) = GeminiDriver::split_messages(&msgs).unwrap();
         assert_eq!(contents[0]["role"], "user");
         assert_eq!(contents[1]["role"], "model");
         assert_eq!(contents[2]["role"], "user");
@@ -368,5 +363,28 @@ mod tests {
         });
         let resp = driver.parse_response(&body).unwrap();
         assert_eq!(resp.finish_reason.as_deref(), Some("content_filter"));
+    }
+
+    #[test]
+    fn test_gemini_document_block_encoding() {
+        use crate::types::message::{ContentBlock, MessageContent};
+
+        let driver = GeminiDriver::new("google", vec![Capability::Text]);
+        let messages = vec![Message::with_content(
+            MessageRole::User,
+            MessageContent::blocks(vec![
+                ContentBlock::text("Summarize"),
+                ContentBlock::document_base64(
+                    "JVBERi0xLjQK".into(),
+                    Some("application/pdf".into()),
+                    None,
+                ),
+            ]),
+        )];
+        let req = driver
+            .build_request(&messages, "gemini-2.0-flash", None, Some(2048), false, None)
+            .unwrap();
+        let parts = &req.body["contents"][0]["parts"];
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "application/pdf");
     }
 }
