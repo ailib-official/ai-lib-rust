@@ -1376,7 +1376,7 @@ fn run_content_block_encode(tc: &TestCase) -> Result<(), Vec<String>> {
         if let Some(expected) = tc.expected.extra.get("encoded") {
             let expected_json: JsonValue = serde_json::to_value(expected)
                 .map_err(|e| vec![format!("expected encoded not JSON: {e}")])?;
-            if &encoded != &expected_json {
+            if encoded != expected_json {
                 failures.push(format!(
                     "encoded mismatch:\n  got: {encoded}\n  expected: {expected_json}"
                 ));
