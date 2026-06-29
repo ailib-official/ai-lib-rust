@@ -1276,6 +1276,184 @@ fn compliance_text_tool_call() {
     );
 }
 
+fn parse_content_blocks_from_input(
+    extra: &HashMap<String, Value>,
+) -> Result<Vec<ai_lib_core::types::message::ContentBlock>, Vec<String>> {
+    use ai_lib_core::types::message::ContentBlock;
+    let blocks_val = extra
+        .get("blocks")
+        .and_then(Value::as_sequence)
+        .ok_or_else(|| vec!["content_block_encode requires blocks array".to_string()])?;
+    let mut blocks = Vec::new();
+    for (i, item) in blocks_val.iter().enumerate() {
+        let block_type = item
+            .get("block_type")
+            .and_then(Value::as_str)
+            .unwrap_or("text");
+        match block_type {
+            "text" => {
+                let text = item
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| vec![format!("blocks[{i}] text block missing text")])?;
+                blocks.push(ContentBlock::text(text));
+            }
+            "document" => {
+                let source_type = item
+                    .get("source_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("base64");
+                let data = item
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| vec![format!("blocks[{i}] document missing data")])?
+                    .to_string();
+                let mime = item
+                    .get("mime_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let block = match source_type {
+                    "ref" => ContentBlock::document_ref(data, mime, None),
+                    "base64" => ContentBlock::document_base64(data, mime, None),
+                    other => {
+                        return Err(vec![format!("blocks[{i}] unsupported source_type: {other}")]);
+                    }
+                };
+                blocks.push(block);
+            }
+            other => return Err(vec![format!("blocks[{i}] unsupported block_type: {other}")]),
+        }
+    }
+    Ok(blocks)
+}
+
+fn run_content_block_encode(tc: &TestCase) -> Result<(), Vec<String>> {
+    use ai_lib_core::protocol::v2::contracts;
+    use ai_lib_core::types::manifest_encode;
+    use serde_json::Value as JsonValue;
+
+    let mut failures = Vec::new();
+    let api_style = tc
+        .input
+        .extra
+        .get("api_style")
+        .and_then(Value::as_str)
+        .ok_or_else(|| vec!["content_block_encode requires api_style".to_string()])?;
+
+    let blocks = parse_content_blocks_from_input(&tc.input.extra)?;
+    let expect_error = tc
+        .input
+        .extra
+        .get("expect_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let encode_result: Result<JsonValue, Vec<String>> = match api_style {
+        "anthropic_messages" => {
+            let contract = contracts::anthropic_messages_contract()
+                .map_err(|e| vec![format!("contract load: {e:?}")])?;
+            manifest_encode::encode_blocks_anthropic(&contract, &blocks)
+                .map(JsonValue::Array)
+                .map_err(|e| vec![format!("encode: {e:?}")])
+        }
+        "gemini_generate" => {
+            let contract = contracts::gemini_generate_contract()
+                .map_err(|e| vec![format!("contract load: {e:?}")])?;
+            manifest_encode::encode_blocks_gemini(&contract, &blocks)
+                .map_err(|e| vec![format!("encode: {e:?}")])
+        }
+        other => Err(vec![format!("unsupported api_style: {other}")]),
+    };
+
+    if expect_error {
+        if encode_result.is_ok() {
+            failures.push("expected encode error but succeeded".to_string());
+        }
+    } else {
+        let encoded = encode_result?;
+        if let Some(expected) = tc.expected.extra.get("encoded") {
+            let expected_json: JsonValue = serde_json::to_value(expected)
+                .map_err(|e| vec![format!("expected encoded not JSON: {e}")])?;
+            if &encoded != &expected_json {
+                failures.push(format!(
+                    "encoded mismatch:\n  got: {encoded}\n  expected: {expected_json}"
+                ));
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
+}
+
+#[test]
+fn compliance_content_block_encode() {
+    let compliance_dir = compliance_dir();
+    if !compliance_dir.exists() {
+        eprintln!(
+            "[SKIP] Compliance directory does not exist: {}",
+            compliance_dir.display()
+        );
+        return;
+    }
+
+    let dir = compliance_dir.join("cases/11-content-block-encoding");
+    if !dir.exists() {
+        eprintln!(
+            "[SKIP] Content block encoding cases dir does not exist: {}",
+            dir.display()
+        );
+        return;
+    }
+
+    let yaml_files = discover_yaml_files(&dir);
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    for file in yaml_files {
+        let content = match fs::read_to_string(&file) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("  [WARN] Could not read {}: {}", file.display(), e);
+                continue;
+            }
+        };
+
+        let cases = parse_test_cases(&content);
+        for tc in cases {
+            if tc.input.test_type != "content_block_encode" {
+                continue;
+            }
+            match run_content_block_encode(&tc) {
+                Ok(()) => {
+                    println!("  [PASS] {} ({})", tc.id, tc.name);
+                    passed += 1;
+                }
+                Err(failures) => {
+                    println!("  [FAIL] {} ({})", tc.id, tc.name);
+                    for f in &failures {
+                        println!("         {f}");
+                    }
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    println!("\n--- Content block encode summary ---");
+    println!("  Passed: {}", passed);
+    println!("  Failed: {}", failed);
+
+    assert_eq!(
+        failed, 0,
+        "{} content_block_encode compliance test(s) failed",
+        failed
+    );
+}
+
 #[test]
 fn compliance_error_classification() {
     let compliance_dir = compliance_dir();

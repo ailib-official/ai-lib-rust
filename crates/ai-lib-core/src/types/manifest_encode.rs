@@ -248,3 +248,40 @@ fn encode_gemini_document_inline(
         }
     }))
 }
+
+/// Map Gemini `parts` JSON to OpenAI-compatible multimodal message `content` array.
+pub fn gemini_parts_to_openai_multimodal_content(parts: &Value) -> Result<Vec<Value>, Error> {
+    let arr = parts
+        .as_array()
+        .ok_or_else(|| validation("gemini parts must be a JSON array"))?;
+    Ok(arr
+        .iter()
+        .map(|part| {
+            if let Some(text) = part.get("text").and_then(Value::as_str) {
+                json!({ "type": "text", "text": text })
+            } else if let Some(inline) = part.get("inlineData") {
+                let mime = inline
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .unwrap_or("application/pdf");
+                let data = inline.get("data").and_then(Value::as_str).unwrap_or("");
+                json!({
+                    "type": "file",
+                    "file": {
+                        "mime_type": mime,
+                        "data": data
+                    }
+                })
+            } else {
+                part.clone()
+            }
+        })
+        .collect())
+}
+
+/// Encode blocks via Gemini contract and shape for OpenAI-compatible proxy bodies.
+pub fn encode_blocks_to_openai_gemini_proxy(blocks: &[ContentBlock]) -> Result<Vec<Value>, Error> {
+    let contract = contracts::gemini_generate_contract()?;
+    let parts = encode_blocks_gemini(&contract, blocks)?;
+    gemini_parts_to_openai_multimodal_content(&parts)
+}
