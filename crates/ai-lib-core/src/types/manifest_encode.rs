@@ -14,7 +14,7 @@ fn validation(msg: impl Into<String>) -> Error {
     Error::Protocol(ProtocolError::ValidationError(msg.into()))
 }
 
-fn document_mapping<'a>(contract: &'a ProviderContract) -> Result<&'a DocumentBlockMapping, Error> {
+fn document_mapping(contract: &ProviderContract) -> Result<&DocumentBlockMapping, Error> {
     contract
         .request_mapping
         .content_block_mapping
