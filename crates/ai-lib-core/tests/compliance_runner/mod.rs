@@ -1316,7 +1316,9 @@ fn parse_content_blocks_from_input(
                     "ref" => ContentBlock::document_ref(data, mime, None),
                     "base64" => ContentBlock::document_base64(data, mime, None),
                     other => {
-                        return Err(vec![format!("blocks[{i}] unsupported source_type: {other}")]);
+                        return Err(vec![format!(
+                            "blocks[{i}] unsupported source_type: {other}"
+                        )]);
                     }
                 };
                 blocks.push(block);
