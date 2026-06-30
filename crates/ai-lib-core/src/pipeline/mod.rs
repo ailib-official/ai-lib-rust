@@ -62,6 +62,7 @@
 //! ```
 
 pub mod accumulate;
+pub mod compliance;
 pub mod decode;
 pub mod event_map;
 pub mod fan_out;

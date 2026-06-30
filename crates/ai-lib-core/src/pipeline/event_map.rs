@@ -56,6 +56,16 @@ impl RuleBasedEventMapper {
         Ok(Self { rules: compiled })
     }
 
+    /// Build a single streaming event from a decoded JSON frame (used by compliance runners).
+    pub fn build_event_for_frame(
+        &self,
+        emit: &str,
+        frame: &Value,
+        extract: &[(String, String)],
+    ) -> Option<StreamingEvent> {
+        Self::build_event(emit, frame, extract)
+    }
+
     fn build_event(
         emit: &str,
         frame: &Value,
