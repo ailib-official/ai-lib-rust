@@ -107,6 +107,42 @@ fn compliance_dir() -> PathBuf {
         .join("ai-protocol/tests/compliance")
 }
 
+/// When `COMPLIANCE_DIR` is set (CI), missing paths must fail the test run.
+fn compliance_dir_or_skip() -> Option<PathBuf> {
+    let dir = compliance_dir();
+    let explicit = env::var("COMPLIANCE_DIR").is_ok();
+    if !dir.exists() {
+        if explicit {
+            panic!(
+                "COMPLIANCE_DIR is set but path does not exist: {}",
+                dir.display()
+            );
+        }
+        eprintln!(
+            "[SKIP] Compliance directory does not exist: {}",
+            dir.display()
+        );
+        eprintln!("       Set COMPLIANCE_DIR to override, or run from workspace with ai-protocol.");
+        return None;
+    }
+    Some(dir)
+}
+
+fn case_dir_or_skip(base: &Path, subpath: &str, label: &str) -> Option<PathBuf> {
+    let dir = base.join(subpath);
+    if !dir.exists() {
+        if env::var("COMPLIANCE_DIR").is_ok() {
+            panic!(
+                "COMPLIANCE_DIR is set but {label} cases dir does not exist: {}",
+                dir.display()
+            );
+        }
+        eprintln!("[SKIP] {label} cases dir does not exist: {}", dir.display());
+        return None;
+    }
+    Some(dir)
+}
+
 fn discover_yaml_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if !dir.exists() {
@@ -1211,23 +1247,15 @@ fn run_text_tool_prompt(tc: &TestCase) -> Result<(), Vec<String>> {
 
 #[test]
 fn compliance_text_tool_call() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
         return;
-    }
+    };
 
-    let text_tool_dir = compliance_dir.join("cases/10-text-tool-call");
-    if !text_tool_dir.exists() {
-        eprintln!(
-            "[SKIP] Text tool call cases dir does not exist: {}",
-            text_tool_dir.display()
-        );
+    let Some(text_tool_dir) =
+        case_dir_or_skip(&compliance_dir, "cases/10-text-tool-call", "Text tool call")
+    else {
         return;
-    }
+    };
 
     let yaml_files = discover_yaml_files(&text_tool_dir);
     let mut passed = 0u32;
@@ -1393,23 +1421,17 @@ fn run_content_block_encode(tc: &TestCase) -> Result<(), Vec<String>> {
 
 #[test]
 fn compliance_content_block_encode() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
         return;
-    }
+    };
 
-    let dir = compliance_dir.join("cases/11-content-block-encoding");
-    if !dir.exists() {
-        eprintln!(
-            "[SKIP] Content block encoding cases dir does not exist: {}",
-            dir.display()
-        );
+    let Some(dir) = case_dir_or_skip(
+        &compliance_dir,
+        "cases/11-content-block-encoding",
+        "Content block encoding",
+    ) else {
         return;
-    }
+    };
 
     let yaml_files = discover_yaml_files(&dir);
     let mut passed = 0u32;
@@ -1458,24 +1480,17 @@ fn compliance_content_block_encode() {
 
 #[test]
 fn compliance_error_classification() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
-        eprintln!("       Set COMPLIANCE_DIR to override, or run from workspace with ai-protocol.");
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
         return;
-    }
+    };
 
-    let error_class_dir = compliance_dir.join("cases/02-error-classification");
-    if !error_class_dir.exists() {
-        eprintln!(
-            "[SKIP] Error classification cases dir does not exist: {}",
-            error_class_dir.display()
-        );
+    let Some(error_class_dir) = case_dir_or_skip(
+        &compliance_dir,
+        "cases/02-error-classification",
+        "Error classification",
+    ) else {
         return;
-    }
+    };
 
     let yaml_files = discover_yaml_files(&error_class_dir);
     let mut passed = 0u32;
@@ -1530,23 +1545,17 @@ fn compliance_error_classification() {
 
 #[test]
 fn compliance_protocol_loading() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
         return;
-    }
+    };
 
-    let loading_dir = compliance_dir.join("cases/01-protocol-loading");
-    if !loading_dir.exists() {
-        eprintln!(
-            "[SKIP] Protocol loading cases dir does not exist: {}",
-            loading_dir.display()
-        );
+    let Some(loading_dir) = case_dir_or_skip(
+        &compliance_dir,
+        "cases/01-protocol-loading",
+        "Protocol loading",
+    ) else {
         return;
-    }
+    };
 
     let yaml_files = discover_yaml_files(&loading_dir);
     let mut passed = 0u32;
@@ -1597,23 +1606,15 @@ fn compliance_protocol_loading() {
 
 #[test]
 fn compliance_retry_decision() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
         return;
-    }
+    };
 
-    let resilience_dir = compliance_dir.join("cases/06-resilience");
-    if !resilience_dir.exists() {
-        eprintln!(
-            "[SKIP] Resilience cases dir does not exist: {}",
-            resilience_dir.display()
-        );
+    let Some(resilience_dir) =
+        case_dir_or_skip(&compliance_dir, "cases/06-resilience", "Resilience")
+    else {
         return;
-    }
+    };
 
     let yaml_files = discover_yaml_files(&resilience_dir);
     let mut passed = 0u32;
@@ -1663,21 +1664,25 @@ fn compliance_retry_decision() {
 
 #[test]
 fn compliance_message_stream_request_cases() {
-    let compliance_dir = compliance_dir();
-    if !compliance_dir.exists() {
-        eprintln!(
-            "[SKIP] Compliance directory does not exist: {}",
-            compliance_dir.display()
-        );
+    let Some(compliance_dir) = compliance_dir_or_skip() else {
+        return;
+    };
+
+    let subs = [
+        ("cases/03-message-building", "Message building"),
+        ("cases/04-streaming", "Streaming"),
+        ("cases/05-request-building", "Request building"),
+        ("cases/07-advanced-capabilities", "Advanced capabilities"),
+    ];
+    let mut case_dirs = Vec::new();
+    for (sub, label) in subs {
+        if let Some(d) = case_dir_or_skip(&compliance_dir, sub, label) {
+            case_dirs.push(d);
+        }
+    }
+    if case_dirs.is_empty() {
         return;
     }
-
-    let case_dirs = [
-        compliance_dir.join("cases/03-message-building"),
-        compliance_dir.join("cases/04-streaming"),
-        compliance_dir.join("cases/05-request-building"),
-        compliance_dir.join("cases/07-advanced-capabilities"),
-    ];
 
     let mut passed = 0u32;
     let mut failed = 0u32;
