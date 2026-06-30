@@ -95,15 +95,15 @@ static METRICS: Mutex<WasmMetrics> = Mutex::new(WasmMetrics {
 });
 
 fn set_out(bytes: Vec<u8>) {
-    *LAST_OUT.lock().expect("out lock") = bytes;
+    *LAST_OUT.lock().unwrap_or_else(|e| e.into_inner()) = bytes;
 }
 
 fn set_err(s: impl AsRef<str>) {
-    *LAST_ERR.lock().expect("err lock") = s.as_ref().as_bytes().to_vec();
+    *LAST_ERR.lock().unwrap_or_else(|e| e.into_inner()) = s.as_ref().as_bytes().to_vec();
 }
 
 fn clear_err() {
-    LAST_ERR.lock().expect("err lock").clear();
+    LAST_ERR.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 fn bump_calls() {

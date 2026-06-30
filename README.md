@@ -139,7 +139,11 @@ For a deeper overview, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
   - **`computer_use`**: Computer Use abstraction — safety policies, domain allowlists, action validation
   - **`multimodal`**: Extended multimodal support — vision, audio, video modality validation and format checks
   - **`reasoning`**: Extended reasoning / chain-of-thought support
+  - **`stt`**: speech-to-text client (`SttClient`)
+  - **`tts`**: text-to-speech client (`TtsClient`)
+  - **`reranking`**: document reranking (`RerankerClient`)
 - **Infrastructure features**:
+  - **`keyring`**: OS keychain credential storage (enabled by default; disable with `default-features = false`)
   - **`routing_mvp`**: pure logic model management helpers (`CustomModelManager`, `ModelArray`, etc.)
   - **`interceptors`**: application-layer call hooks (`InterceptorPipeline`, `Interceptor`, `RequestContext`)
 - **Meta-feature**:
@@ -150,13 +154,13 @@ Enable with:
 ```toml
 [dependencies]
 # Lean core (default)
-ai-lib-rust = "0.8.0"
+ai-lib-rust = "0.9.6"
 
 # With specific capabilities
-ai-lib-rust = { version = "0.8.0", features = ["embeddings", "telemetry"] }
+ai-lib-rust = { version = "0.9.6", features = ["embeddings", "telemetry"] }
 
 # Everything enabled
-ai-lib-rust = { version = "0.8.0", features = ["full"] }
+ai-lib-rust = { version = "0.9.6", features = ["full"] }
 ```
 
 ## 🗺️ Capability map (layered tools)
@@ -340,7 +344,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ai-lib-rust = "0.8.0"
+ai-lib-rust = "0.9.6"
 tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
 ```
@@ -392,12 +396,7 @@ Provider-specific details vary, but `ai-lib-rust` normalizes them behind a unifi
 - **Proxy**: set `AI_PROXY_URL` (e.g. `http://user:pass@host:port`)
 - **HTTP timeout**: set `AI_HTTP_TIMEOUT_SECS` (fallback: `AI_TIMEOUT_SECS`)
 - **In-flight limit**: set `AI_LIB_MAX_INFLIGHT` or use `AiClientBuilder::max_inflight(n)`
-- **Rate limiting** (optional): set either
-  - `AI_LIB_RPS` (requests per second), or
-  - `AI_LIB_RPM` (requests per minute)
-- **Circuit breaker** (optional): enable via `AiClientBuilder::circuit_breaker_default()` or env
-  - `AI_LIB_BREAKER_FAILURE_THRESHOLD` (default 5)
-  - `AI_LIB_BREAKER_COOLDOWN_SECS` (default 30)
+- **Rate limiting / circuit breaker** (policy layer): configure via `ai_lib_contact::resilience` (facade: `ai_lib_rust::resilience`) beside the client — `AiClient` no longer embeds breaker/rate-limiter wiring (see CHANGELOG 0.9.4).
 
 ## 📊 Observability: CallStats
 
