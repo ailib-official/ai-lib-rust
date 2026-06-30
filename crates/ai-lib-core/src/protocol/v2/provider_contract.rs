@@ -82,7 +82,6 @@ impl DocumentBlockMapping {
 
 #[cfg(test)]
 mod tests {
-    use super::DocumentBlockMapping;
     use crate::protocol::v2::contracts;
 
     #[test]

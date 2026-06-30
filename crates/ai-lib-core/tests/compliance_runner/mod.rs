@@ -5,6 +5,9 @@
 
 use ai_lib_core::client::classify_error_from_response;
 use ai_lib_core::error_code::StandardErrorCode;
+use ai_lib_core::pipeline::compliance::{
+    decode_sse_chunks_sync, event_map_rules_from_yaml, map_frame_to_compliance_events,
+};
 use ai_lib_core::pipeline::retry::{ResiliencePolicy, RetryConfig, RetryOperator};
 use ai_lib_core::protocol::v2::ManifestV2;
 use ai_lib_core::protocol::ProtocolManifest;
@@ -691,51 +694,38 @@ fn run_stream_decode(tc: &TestCase) -> Result<(), Vec<String>> {
         .and_then(Value::as_str)
         .unwrap_or("[DONE]");
 
-    let mut frames: Vec<Value> = Vec::new();
-    let mut done_received = false;
-    for chunk in raw_chunks {
-        if let Some(chunk_str) = chunk.as_str() {
-            for line in chunk_str.lines() {
-                if !line.starts_with(prefix) {
-                    continue;
-                }
-                let payload = line[prefix.len()..].trim();
-                if payload == done_signal {
-                    done_received = true;
-                    continue;
-                }
-                if payload.is_empty() {
-                    continue;
-                }
-                if let Ok(frame) = serde_json::from_str::<serde_json::Value>(payload) {
-                    if let Ok(yaml_frame) = serde_yaml::to_value(frame) {
-                        frames.push(yaml_frame);
-                    }
-                }
-            }
-        }
-    }
+    let chunk_strings: Vec<String> = raw_chunks
+        .iter()
+        .filter_map(|c| c.as_str().map(str::to_string))
+        .collect();
 
-    if let Some(frame_count) = tc
+    let (frame_count, done_received) =
+        match decode_sse_chunks_sync(&chunk_strings, prefix, done_signal) {
+            Ok(v) => v,
+            Err(e) => {
+                failures.push(format!("stream decode: {e}"));
+                return Err(failures);
+            }
+        };
+
+    if let Some(frame_count_cfg) = tc
         .expected
         .extra
         .get("frame_count")
         .and_then(Value::as_mapping)
     {
-        let min_expected = frame_count
+        let min_expected = frame_count_cfg
             .get(Value::String("min".to_string()))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        let max_expected = frame_count
+        let max_expected = frame_count_cfg
             .get(Value::String("max".to_string()))
             .and_then(Value::as_u64)
             .unwrap_or(u64::MAX) as usize;
-        if frames.len() < min_expected || frames.len() > max_expected {
+        if frame_count < min_expected || frame_count > max_expected {
             failures.push(format!(
                 "frame_count: expected in [{}, {}], got {}",
-                min_expected,
-                max_expected,
-                frames.len()
+                min_expected, max_expected, frame_count
             ));
         }
     }
@@ -749,6 +739,17 @@ fn run_stream_decode(tc: &TestCase) -> Result<(), Vec<String>> {
         && !done_received
     {
         failures.push("done_received: expected true".to_string());
+    }
+
+    if tc
+        .expected
+        .extra
+        .get("completed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && !done_received
+    {
+        failures.push("completed: expected true".to_string());
     }
 
     if failures.is_empty() {
@@ -767,47 +768,28 @@ fn run_event_mapping(tc: &TestCase) -> Result<(), Vec<String>> {
         .and_then(Value::as_sequence)
         .cloned()
         .unwrap_or_default();
+
+    let rules = match tc
+        .input
+        .extra
+        .get("event_map")
+        .map(event_map_rules_from_yaml)
+    {
+        Some(Ok(r)) => r,
+        Some(Err(e)) => {
+            failures.push(format!("event_map rules: {e}"));
+            return Err(failures);
+        }
+        None => Vec::new(),
+    };
+
     let mut actual_events: Vec<Value> = Vec::new();
     for frame in frames {
-        let Some(first_choice) = frame
-            .get("choices")
-            .and_then(Value::as_sequence)
-            .and_then(|s| s.first())
-        else {
-            continue;
-        };
-        if let Some(content) = first_choice
-            .get("delta")
-            .and_then(Value::as_mapping)
-            .and_then(|m| m.get(Value::String("content".to_string())))
-        {
-            let mut e = HashMap::new();
-            e.insert(
-                "type".to_string(),
-                Value::String("PartialContentDelta".to_string()),
-            );
-            e.insert("content".to_string(), content.clone());
-            actual_events.push(serde_yaml::to_value(e).unwrap_or(Value::Null));
-        }
-        if let Some(tool_calls) = first_choice
-            .get("delta")
-            .and_then(Value::as_mapping)
-            .and_then(|m| m.get(Value::String("tool_calls".to_string())))
-        {
-            let mut e = HashMap::new();
-            e.insert(
-                "type".to_string(),
-                Value::String("PartialToolCall".to_string()),
-            );
-            e.insert("tool_calls".to_string(), tool_calls.clone());
-            actual_events.push(serde_yaml::to_value(e).unwrap_or(Value::Null));
-        }
-        if let Some(finish_reason) = first_choice.get("finish_reason") {
-            if !finish_reason.is_null() {
-                let mut e = HashMap::new();
-                e.insert("type".to_string(), Value::String("StreamEnd".to_string()));
-                e.insert("finish_reason".to_string(), finish_reason.clone());
-                actual_events.push(serde_yaml::to_value(e).unwrap_or(Value::Null));
+        match map_frame_to_compliance_events(&frame, &rules) {
+            Ok(mut events) => actual_events.append(&mut events),
+            Err(e) => {
+                failures.push(format!("event mapping: {e}"));
+                return Err(failures);
             }
         }
     }
