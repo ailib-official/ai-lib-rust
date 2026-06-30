@@ -312,9 +312,12 @@ impl HttpTransport {
             }
         }
 
-        Err(crate::Error::Transport(
-            crate::transport::TransportError::Http(last_err.expect("at least one route exists")),
-        ))
+        Err(crate::Error::Transport(match last_err {
+            Some(e) => crate::transport::TransportError::Http(e),
+            None => crate::transport::TransportError::Other(
+                "all HTTP routes exhausted with retryable status codes".to_string(),
+            ),
+        }))
     }
 
     pub async fn execute_stream<'a>(
@@ -395,9 +398,12 @@ impl HttpTransport {
             }
         }
 
-        Err(crate::Error::Transport(
-            crate::transport::TransportError::Http(last_err.expect("at least one route exists")),
-        ))
+        Err(crate::Error::Transport(match last_err {
+            Some(e) => crate::transport::TransportError::Http(e),
+            None => crate::transport::TransportError::Other(
+                "all HTTP routes exhausted with retryable status codes".to_string(),
+            ),
+        }))
     }
 }
 
