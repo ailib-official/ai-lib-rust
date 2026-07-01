@@ -71,13 +71,15 @@ jobs:
   test-with-mock:
     name: Test with ai-protocol-mock
     runs-on: ubuntu-latest
+    env:
+      AI_PROTOCOL_REF: v1.0.0
     steps:
       - uses: actions/checkout@v4
       - name: Checkout ai-protocol
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          ref: main
+          ref: v1.0.0
           path: ai-protocol
 
       - name: Checkout ai-protocol-mock
@@ -98,7 +100,7 @@ jobs:
         run: |
           cd ai-protocol-mock
           pip install -e .
-          python scripts/sync_manifests.py --force || true
+          python scripts/sync_manifests.py --force --tag v1.0.0 || true
           uvicorn ai_protocol_mock.main:app --host 0.0.0.0 --port 4010 &
           sleep 3
 
