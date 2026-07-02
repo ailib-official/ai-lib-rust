@@ -1,4 +1,4 @@
-//! ALR-TTC-003 Phase 4 — live provider validation harness (DeepSeek).
+//! ALR-TTC-003 Phase 4 — live provider validation harness (DeepSeek + Claude).
 //!
 //! 文本工具调用 Phase 4 真机验证；`#[ignore]` + CI `--ignored` 时无密钥则 skip。
 
@@ -257,5 +257,124 @@ async fn deepseek_chat_jsonl_export() {
             });
             writeln!(file, "{record}").expect("write jsonl");
         }
+    }
+}
+
+// --- Anthropic (ALR-TTC-003-R3) ---
+
+const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
+
+fn anthropic_api_key() -> Option<String> {
+    std::env::var("ANTHROPIC_API_KEY")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn skip_without_anthropic_key(test_name: &str) -> bool {
+    if anthropic_api_key().is_some() {
+        return false;
+    }
+    eprintln!("{test_name}: ANTHROPIC_API_KEY not set, skipping");
+    true
+}
+
+fn extract_anthropic_text(json: &Value) -> String {
+    json["content"]
+        .as_array()
+        .and_then(|blocks| blocks.first())
+        .and_then(|b| b["text"].as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+async fn anthropic_completion(model: &str, system: &str, user: &str) -> String {
+    let key = anthropic_api_key().expect("caller must gate on key");
+    let body = json!({
+        "model": model,
+        "max_tokens": 1024,
+        "temperature": 0,
+        "system": system,
+        "messages": [{ "role": "user", "content": user }]
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(ANTHROPIC_URL)
+        .header("x-api-key", key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .expect("anthropic request");
+    let status = resp.status();
+    let text = resp.text().await.expect("response body");
+    assert!(status.is_success(), "anthropic HTTP {status}: {text}");
+    let json: Value = serde_json::from_str(&text).expect("json");
+    extract_anthropic_text(&json)
+}
+
+async fn run_claude_rounds(model: &str, case: &Phase4Case, rounds: u32, min_success: u32) {
+    let parser = parser_for_locale(case.locale);
+    let tools = phase4_tools();
+    let system = parser.prompt_instructions(&tools);
+    let mut successes = 0u32;
+    for round in 1..=rounds {
+        let raw = anthropic_completion(model, &system, case.user_msg).await;
+        let (_remainder, calls) = parser.parse(&raw);
+        let ok = case_matches(case, &calls);
+        if ok {
+            successes += 1;
+        }
+        eprintln!(
+            "{}",
+            json!({
+                "schema_version": 1,
+                "task": "ALR-TTC-003",
+                "provider": "anthropic",
+                "model": model,
+                "round": round,
+                "case_id": case.id,
+                "prompt_lang": case.locale,
+                "success": ok,
+                "tool_count": calls.len(),
+            })
+        );
+    }
+    assert!(
+        successes >= min_success,
+        "expected ≥{min_success}/{rounds} for {} on {model}, got {successes}",
+        case.id
+    );
+}
+
+/// P4-01 × 5 on claude-sonnet-4-6 (text path, no native tools).
+#[tokio::test]
+#[ignore = "live Anthropic API — requires ANTHROPIC_API_KEY"]
+async fn claude_sonnet_p4_01_five_rounds() {
+    if skip_without_anthropic_key("claude_sonnet_p4_01_five_rounds") {
+        return;
+    }
+    run_claude_rounds("claude-sonnet-4-6", &CASES[0], 5, 3).await;
+}
+
+/// P4-01 × 5 on claude-opus-4-8.
+#[tokio::test]
+#[ignore = "live Anthropic API — requires ANTHROPIC_API_KEY"]
+async fn claude_opus_p4_01_five_rounds() {
+    if skip_without_anthropic_key("claude_opus_p4_01_five_rounds") {
+        return;
+    }
+    run_claude_rounds("claude-opus-4-8", &CASES[0], 5, 2).await;
+}
+
+/// All P4 cases × 1 round on claude-sonnet-4-6.
+#[tokio::test]
+#[ignore = "live Anthropic API — requires ANTHROPIC_API_KEY"]
+async fn claude_sonnet_all_cases_one_round() {
+    if skip_without_anthropic_key("claude_sonnet_all_cases_one_round") {
+        return;
+    }
+    for case in &CASES {
+        run_claude_rounds("claude-sonnet-4-6", case, 1, 1).await;
     }
 }
