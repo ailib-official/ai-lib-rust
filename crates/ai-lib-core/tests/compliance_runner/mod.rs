@@ -1217,7 +1217,7 @@ fn run_text_tool_parse(tc: &TestCase) -> Result<(), Vec<String>> {
 
 fn run_text_tool_hybrid(tc: &TestCase) -> Result<(), Vec<String>> {
     use ai_lib_core::types::text_tool::{
-        parse_hybrid_tool_calls, StandardTextToolParser, TextToolConfig, TextToolParser,
+        parse_hybrid_tool_calls, StandardTextToolParser, TextToolConfig,
     };
     use ai_lib_core::types::tool::ToolCall;
 
