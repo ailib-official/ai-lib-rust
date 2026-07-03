@@ -1,4 +1,4 @@
-//! ALR-TTC-003 Phase 4 — live provider validation harness (DeepSeek + Claude).
+//! ALR-TTC-003 Phase 4 — live provider validation harness (DeepSeek + Claude + Ollama).
 //!
 //! 文本工具调用 Phase 4 真机验证；`#[ignore]` + CI `--ignored` 时无密钥则 skip。
 
@@ -138,7 +138,11 @@ async fn deepseek_completion(model: &str, system: &str, user: &str) -> String {
 }
 
 /// Mode B (ALR-TTC-003-R2b): native `tools` API — models may emit DSML/text markup in content.
-async fn deepseek_completion_with_tools(model: &str, user: &str, tools: &[ToolDefinition]) -> Value {
+async fn deepseek_completion_with_tools(
+    model: &str,
+    user: &str,
+    tools: &[ToolDefinition],
+) -> Value {
     let key = deepseek_api_key().expect("caller must gate on key");
     let body = json!({
         "model": model,
@@ -467,5 +471,190 @@ async fn claude_sonnet_all_cases_one_round() {
     }
     for case in &CASES {
         run_claude_rounds("claude-sonnet-4-6", case, 1, 1).await;
+    }
+}
+
+// --- Ollama local (ALR-TTC-003-R4) ---
+
+fn ollama_host() -> String {
+    std::env::var("OLLAMA_HOST")
+        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+async fn ollama_reachable() -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .get(format!("{}/api/tags", ollama_host()))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn ollama_model_available(model: &str) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let Ok(resp) = client
+        .get(format!("{}/api/tags", ollama_host()))
+        .send()
+        .await
+    else {
+        return false;
+    };
+    let Ok(text) = resp.text().await else {
+        return false;
+    };
+    let Ok(json) = serde_json::from_str::<Value>(&text) else {
+        return false;
+    };
+    json["models"].as_array().is_some_and(|models| {
+        models.iter().any(|m| {
+            m["name"]
+                .as_str()
+                .is_some_and(|name| name == model || name.starts_with(&format!("{model}:")))
+        })
+    })
+}
+
+async fn skip_without_ollama(test_name: &str, model: &str) -> bool {
+    if !ollama_reachable().await {
+        eprintln!(
+            "{test_name}: Ollama not reachable at {}, skipping",
+            ollama_host()
+        );
+        return true;
+    }
+    if !ollama_model_available(model).await {
+        eprintln!("{test_name}: model {model} not in Ollama tags, skipping");
+        return true;
+    }
+    false
+}
+
+fn extract_ollama_content(json: &Value) -> String {
+    json["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+async fn ollama_completion(model: &str, system: &str, user: &str) -> String {
+    let body = json!({
+        "model": model,
+        "stream": false,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ],
+        "options": { "temperature": 0 }
+    });
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/chat", ollama_host());
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .expect("ollama request");
+    let status = resp.status();
+    let text = resp.text().await.expect("response body");
+    assert!(status.is_success(), "ollama HTTP {status}: {text}");
+    let json: Value = serde_json::from_str(&text).expect("json");
+    extract_ollama_content(&json)
+}
+
+async fn run_ollama_rounds(model: &str, case: &Phase4Case, rounds: u32, min_success: u32) {
+    let parser = parser_for_locale(case.locale);
+    let tools = phase4_tools();
+    let system = parser.prompt_instructions(&tools);
+    let mut successes = 0u32;
+    for round in 1..=rounds {
+        let raw = ollama_completion(model, &system, case.user_msg).await;
+        let (_remainder, calls) = parser.parse(&raw);
+        let ok = case_matches(case, &calls);
+        if ok {
+            successes += 1;
+        }
+        eprintln!(
+            "{}",
+            json!({
+                "schema_version": 1,
+                "task": "ALR-TTC-003-R4",
+                "call_mode": "text_prompt",
+                "provider": "ollama",
+                "model": model,
+                "round": round,
+                "case_id": case.id,
+                "prompt_lang": case.locale,
+                "deviation": detect_text_tool_deviation(&raw).map(|d| d.as_str()),
+                "success": ok,
+                "tool_count": calls.len(),
+            })
+        );
+    }
+    assert!(
+        successes >= min_success,
+        "expected ≥{min_success}/{rounds} for {} on {model}, got {successes}",
+        case.id
+    );
+}
+
+/// P4-01 × 5 on llama3 (local).
+#[tokio::test]
+#[ignore = "live Ollama — requires local daemon + llama3 model"]
+async fn ollama_llama3_p4_01_five_rounds() {
+    const MODEL: &str = "llama3";
+    if skip_without_ollama("ollama_llama3_p4_01_five_rounds", MODEL).await {
+        return;
+    }
+    run_ollama_rounds(MODEL, &CASES[0], 5, 2).await;
+}
+
+/// P4-01 × 5 on qwen2.5 (local).
+#[tokio::test]
+#[ignore = "live Ollama — requires local daemon + qwen2.5 model"]
+async fn ollama_qwen25_p4_01_five_rounds() {
+    const MODEL: &str = "qwen2.5";
+    if skip_without_ollama("ollama_qwen25_p4_01_five_rounds", MODEL).await {
+        return;
+    }
+    run_ollama_rounds(MODEL, &CASES[0], 5, 2).await;
+}
+
+/// P4-01 × 5 on mistral (local).
+#[tokio::test]
+#[ignore = "live Ollama — requires local daemon + mistral model"]
+async fn ollama_mistral_p4_01_five_rounds() {
+    const MODEL: &str = "mistral";
+    if skip_without_ollama("ollama_mistral_p4_01_five_rounds", MODEL).await {
+        return;
+    }
+    run_ollama_rounds(MODEL, &CASES[0], 5, 2).await;
+}
+
+/// All P4 cases × 1 round on llama3.
+#[tokio::test]
+#[ignore = "live Ollama — requires local daemon + llama3 model"]
+async fn ollama_llama3_all_cases_one_round() {
+    const MODEL: &str = "llama3";
+    if skip_without_ollama("ollama_llama3_all_cases_one_round", MODEL).await {
+        return;
+    }
+    for case in &CASES {
+        run_ollama_rounds(MODEL, case, 1, 1).await;
     }
 }
