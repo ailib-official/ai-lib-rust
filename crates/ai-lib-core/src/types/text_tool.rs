@@ -124,6 +124,58 @@ impl StandardTextToolParser {
     }
 }
 
+/// Observed text-tool deviation categories (align with ai-protocol `format.yaml` / §1.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextToolDeviation {
+    StandardToolCall,
+    ShellDialect,
+    BashDialect,
+    DsmlDialect,
+}
+
+impl TextToolDeviation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StandardToolCall => "standard_tool_call",
+            Self::ShellDialect => "shell",
+            Self::BashDialect => "bash",
+            Self::DsmlDialect => "dsml",
+        }
+    }
+}
+
+/// Detect the first recognizable text-tool markup in LLM output (for live validation logging).
+pub fn detect_text_tool_deviation(text: &str) -> Option<TextToolDeviation> {
+    if text.contains(DSML_TAG) {
+        return Some(TextToolDeviation::DsmlDialect);
+    }
+    if shell_dialect_re().is_match(text) {
+        return Some(TextToolDeviation::ShellDialect);
+    }
+    if bash_dialect_re().is_match(text) {
+        return Some(TextToolDeviation::BashDialect);
+    }
+    if tool_call_block_re().is_match(text) {
+        return Some(TextToolDeviation::StandardToolCall);
+    }
+    None
+}
+
+/// Merge native structured tool calls with lenient text parsing when native is empty.
+///
+/// Runtime policy (ARCH-001): dialect parsing lives in ai-lib-core; applications only
+/// wire dispatchers and must not implement provider-specific markup parsers.
+pub fn parse_hybrid_tool_calls(
+    parser: &impl TextToolParser,
+    content: &str,
+    native_calls: &[ToolCall],
+) -> (String, Vec<ToolCall>) {
+    if !native_calls.is_empty() {
+        return (content.to_string(), native_calls.to_vec());
+    }
+    parser.parse(content)
+}
+
 impl TextToolParser for StandardTextToolParser {
     fn parse(&self, response_text: &str) -> (String, Vec<ToolCall>) {
         parse_text_tool_calls(response_text, &self.config)
@@ -519,6 +571,44 @@ mod tests {
         assert_eq!(
             calls[0].arguments["command"],
             "ssh piubt \"systemctl status pifan\" 2>&1"
+        );
+    }
+
+    #[test]
+    fn hybrid_prefers_native_calls() {
+        let parser = parser_lenient();
+        let native = vec![ToolCall {
+            id: "call_1".to_string(),
+            name: "shell".to_string(),
+            arguments: serde_json::json!({"command": "ls"}),
+        }];
+        let text = "<shell><command>ignored</command></shell>";
+        let (_, calls) = parse_hybrid_tool_calls(&parser, text, &native);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+    }
+
+    #[test]
+    fn hybrid_falls_back_to_text_when_native_empty() {
+        let parser = parser_lenient();
+        let tag = DSML_TAG;
+        let text = format!(
+            "<{tag}invoke name=\"shell\">\
+             <{tag}parameter name=\"command\">pwd</{tag}parameter>\
+             </{tag}invoke>"
+        );
+        let (_, calls) = parse_hybrid_tool_calls(&parser, &text, &[]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments["command"], "pwd");
+    }
+
+    #[test]
+    fn detect_dsml_deviation() {
+        let tag = DSML_TAG;
+        let text = format!("<{tag}invoke name=\"shell\"></{tag}invoke>");
+        assert_eq!(
+            detect_text_tool_deviation(&text),
+            Some(TextToolDeviation::DsmlDialect)
         );
     }
 

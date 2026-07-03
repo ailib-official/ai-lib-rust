@@ -3,9 +3,10 @@
 //! 文本工具调用 Phase 4 真机验证；`#[ignore]` + CI `--ignored` 时无密钥则 skip。
 
 use ai_lib_core::types::text_tool::{
-    PromptLevel, StandardTextToolParser, TextToolConfig, TextToolParser,
+    detect_text_tool_deviation, parse_hybrid_tool_calls, PromptLevel, StandardTextToolParser,
+    TextToolConfig, TextToolParser,
 };
-use ai_lib_core::types::tool::{FunctionDefinition, ToolDefinition};
+use ai_lib_core::types::tool::{FunctionDefinition, ToolCall, ToolDefinition};
 use serde_json::{json, Value};
 use std::io::Write;
 
@@ -136,6 +137,48 @@ async fn deepseek_completion(model: &str, system: &str, user: &str) -> String {
     extract_message_content(&json)
 }
 
+/// Mode B (ALR-TTC-003-R2b): native `tools` API — models may emit DSML/text markup in content.
+async fn deepseek_completion_with_tools(model: &str, user: &str, tools: &[ToolDefinition]) -> Value {
+    let key = deepseek_api_key().expect("caller must gate on key");
+    let body = json!({
+        "model": model,
+        "temperature": 0,
+        "messages": [{ "role": "user", "content": user }],
+        "tools": tools,
+        "tool_choice": "auto"
+    });
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(API_URL)
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+        .expect("deepseek request");
+    let status = resp.status();
+    let text = resp.text().await.expect("response body");
+    assert!(status.is_success(), "deepseek HTTP {status}: {text}");
+    serde_json::from_str(&text).expect("json")
+}
+
+fn extract_native_tool_calls(msg: &Value) -> Vec<ToolCall> {
+    msg["tool_calls"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|tc| {
+                    Some(ToolCall {
+                        id: tc["id"].as_str()?.to_string(),
+                        name: tc["function"]["name"].as_str()?.to_string(),
+                        arguments: serde_json::from_str(tc["function"]["arguments"].as_str()?)
+                            .unwrap_or(json!({})),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn case_matches(case: &Phase4Case, calls: &[ai_lib_core::types::tool::ToolCall]) -> bool {
     case.expected_tools
         .iter()
@@ -159,11 +202,13 @@ async fn run_rounds(model: &str, case: &Phase4Case, rounds: u32, min_success: u3
             json!({
                 "schema_version": 1,
                 "task": "ALR-TTC-003",
+                "call_mode": "text_prompt",
                 "provider": "deepseek",
                 "model": model,
                 "round": round,
                 "case_id": case.id,
                 "prompt_lang": case.locale,
+                "deviation": detect_text_tool_deviation(&raw).map(|d| d.as_str()),
                 "success": ok,
                 "tool_count": calls.len(),
             })
@@ -214,6 +259,52 @@ async fn deepseek_reasoner_p4_01_five_rounds() {
         return;
     }
     run_rounds("deepseek-reasoner", &CASES[0], 5, 2).await;
+}
+
+/// R2b — Mode B: native `tools` API + `parse_hybrid_tool_calls` (production-like path).
+#[tokio::test]
+#[ignore = "live DeepSeek API — requires DEEPSEEK_API_KEY"]
+async fn deepseek_chat_p4_01_native_tools_hybrid() {
+    if skip_without_key("deepseek_chat_p4_01_native_tools_hybrid") {
+        return;
+    }
+    let case = &CASES[0];
+    let tools = phase4_tools();
+    let parser = parser_for_locale(case.locale);
+    let model = "deepseek-chat";
+    let mut successes = 0u32;
+    let rounds = 3;
+    for round in 1..=rounds {
+        let resp = deepseek_completion_with_tools(model, case.user_msg, &tools).await;
+        let msg = &resp["choices"][0]["message"];
+        let content = extract_message_content(&resp);
+        let native = extract_native_tool_calls(msg);
+        let (_remainder, calls) = parse_hybrid_tool_calls(&parser, &content, &native);
+        let ok = case_matches(case, &calls);
+        if ok {
+            successes += 1;
+        }
+        eprintln!(
+            "{}",
+            json!({
+                "schema_version": 1,
+                "task": "ALR-TTC-003-R2b",
+                "call_mode": "native_tools",
+                "provider": "deepseek",
+                "model": model,
+                "round": round,
+                "case_id": case.id,
+                "native_tool_count": native.len(),
+                "deviation": detect_text_tool_deviation(&content).map(|d| d.as_str()),
+                "success": ok,
+                "tool_count": calls.len(),
+            })
+        );
+    }
+    assert!(
+        successes >= 1,
+        "R2b: expected ≥1/{rounds} hybrid parse success on {model}, got {successes}"
+    );
 }
 
 /// Optional JSONL export when `TTC_PHASE4_OUT` is set.
