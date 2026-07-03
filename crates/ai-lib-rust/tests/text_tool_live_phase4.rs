@@ -138,7 +138,11 @@ async fn deepseek_completion(model: &str, system: &str, user: &str) -> String {
 }
 
 /// Mode B (ALR-TTC-003-R2b): native `tools` API — models may emit DSML/text markup in content.
-async fn deepseek_completion_with_tools(model: &str, user: &str, tools: &[ToolDefinition]) -> Value {
+async fn deepseek_completion_with_tools(
+    model: &str,
+    user: &str,
+    tools: &[ToolDefinition],
+) -> Value {
     let key = deepseek_api_key().expect("caller must gate on key");
     let body = json!({
         "model": model,
