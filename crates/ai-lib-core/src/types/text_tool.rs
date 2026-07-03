@@ -169,6 +169,84 @@ fn bash_dialect_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"(?s)<bash>(.*?)</bash>").expect("valid bash dialect regex"))
 }
 
+/// DeepSeek DSML delimiter: `<` + `｜｜DSML｜｜` (U+FF5C fullwidth vertical line).
+const DSML_TAG: &str = "\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C}";
+
+fn dsml_invoke_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r#"(?s)<{DSML_TAG}invoke\s+name="([^"]+)">(.*?)</{DSML_TAG}invoke>"#
+        ))
+        .expect("valid dsml invoke regex")
+    })
+}
+
+fn dsml_parameter_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r#"(?s)<{DSML_TAG}parameter\s+name="([^"]+)"[^>]*>(.*?)</{DSML_TAG}parameter>"#
+        ))
+        .expect("valid dsml parameter regex")
+    })
+}
+
+/// Parse DeepSeek DSML text tool calls (`<｜｜DSML｜｜invoke>` / `<｜｜DSML｜｜parameter>`).
+fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
+    let mut tool_calls = Vec::new();
+    let mut spans_to_remove = Vec::new();
+    let param_re = dsml_parameter_re();
+
+    for caps in dsml_invoke_re().captures_iter(text) {
+        let full = caps.get(0).unwrap();
+        let tool_name = caps
+            .get(1)
+            .map(|m| m.as_str().trim())
+            .unwrap_or("")
+            .to_string();
+        if tool_name.is_empty() {
+            continue;
+        }
+
+        let body = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let mut arguments = serde_json::Map::new();
+        for param_caps in param_re.captures_iter(body) {
+            let key = param_caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let value = param_caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+            if !key.is_empty() {
+                arguments.insert(
+                    key.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+            }
+        }
+
+        let idx = tool_calls.len();
+        tool_calls.push(ToolCall {
+            id: format!("text_tool_{idx}"),
+            name: tool_name,
+            arguments: serde_json::Value::Object(arguments),
+        });
+        spans_to_remove.push((full.start(), full.end()));
+    }
+
+    // Prefer removing the outer DSML wrapper as one span when present.
+    let wrapper_re = Regex::new(&format!(
+        r"(?s)<{DSML_TAG}tool_calls>\s*(.*?)\s*</{DSML_TAG}tool_calls>"
+    ))
+    .expect("valid dsml tool_calls wrapper regex");
+    if !tool_calls.is_empty() {
+        if let Some(caps) = wrapper_re.captures(text) {
+            if let Some(full) = caps.get(0) {
+                spans_to_remove = vec![(full.start(), full.end())];
+            }
+        }
+    }
+
+    (tool_calls, spans_to_remove)
+}
+
 fn unwrap_tool_calls_wrapper(text: &str) -> String {
     let outer_re = Regex::new(r"(?s)<tool_calls>\s*(.*?)\s*</tool_calls>").unwrap();
     if let Some(caps) = outer_re.captures(text) {
@@ -261,7 +339,11 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
 
     // L4: dialect adaptation when lenient and no standard blocks found
     if config.lenient_parsing && tool_calls.is_empty() {
-        if let Some(caps) = shell_dialect_re().captures(&remaining) {
+        let (dsml_calls, dsml_spans) = parse_dsml_dialect(&remaining);
+        if !dsml_calls.is_empty() {
+            tool_calls.extend(dsml_calls);
+            spans_to_remove.extend(dsml_spans);
+        } else if let Some(caps) = shell_dialect_re().captures(&remaining) {
             let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
             tool_calls.push(ToolCall {
                 id: "text_tool_0".to_string(),
@@ -417,6 +499,27 @@ mod tests {
         assert_eq!(remaining, "Running command:");
         assert_eq!(calls[0].name, "shell");
         assert_eq!(calls[0].arguments["command"], "ls");
+    }
+
+    #[test]
+    fn lenient_deepseek_dsml_dialect() {
+        let tag = DSML_TAG;
+        let text = format!(
+            "我来检查 piubt 服务器上 pifan 服务的概况。\n\n\
+             <{tag}tool_calls>\n\
+             <{tag}invoke name=\"shell\">\n\
+             <{tag}parameter name=\"command\" string=\"true\">ssh piubt \"systemctl status pifan\" 2>&1</{tag}parameter>\n\
+             </{tag}invoke>\n\
+             </{tag}tool_calls>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(remaining, "我来检查 piubt 服务器上 pifan 服务的概况。");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "ssh piubt \"systemctl status pifan\" 2>&1"
+        );
     }
 
     #[test]
