@@ -1215,6 +1215,133 @@ fn run_text_tool_parse(tc: &TestCase) -> Result<(), Vec<String>> {
     }
 }
 
+fn run_text_tool_hybrid(tc: &TestCase) -> Result<(), Vec<String>> {
+    use ai_lib_core::types::text_tool::{
+        parse_hybrid_tool_calls, StandardTextToolParser, TextToolConfig, TextToolParser,
+    };
+    use ai_lib_core::types::tool::ToolCall;
+
+    fn yaml_to_json(v: &Value) -> serde_json::Value {
+        match v {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::Value::Bool(*b),
+            Value::Number(n) => n
+                .as_f64()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null),
+            Value::String(s) => serde_json::Value::String(s.clone()),
+            Value::Sequence(seq) => {
+                serde_json::Value::Array(seq.iter().map(yaml_to_json).collect())
+            }
+            Value::Mapping(m) => {
+                let mut map = serde_json::Map::new();
+                for (k, val) in m {
+                    if let Some(key) = k.as_str() {
+                        map.insert(key.to_string(), yaml_to_json(val));
+                    }
+                }
+                serde_json::Value::Object(map)
+            }
+            Value::Tagged(t) => yaml_to_json(&t.value),
+        }
+    }
+
+    fn yaml_to_json_args(v: Option<&Value>) -> serde_json::Value {
+        v.map(yaml_to_json).unwrap_or(serde_json::json!({}))
+    }
+
+    let mut failures = Vec::new();
+    let content = tc
+        .input
+        .extra
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let lenient = tc
+        .input
+        .extra
+        .get("config")
+        .and_then(|c| c.get("lenient_parsing"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    let parser = StandardTextToolParser::new(TextToolConfig {
+        lenient_parsing: lenient,
+        ..Default::default()
+    });
+
+    let native_calls: Vec<ToolCall> = match tc.input.extra.get("native_tool_calls") {
+        Some(Value::Sequence(arr)) => arr
+            .iter()
+            .filter_map(|v| {
+                Some(ToolCall {
+                    id: v.get("id")?.as_str()?.to_string(),
+                    name: v.get("name")?.as_str()?.to_string(),
+                    arguments: yaml_to_json_args(v.get("arguments")),
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let (remaining, calls) = parse_hybrid_tool_calls(&parser, content, &native_calls);
+
+    if let Some(expected_remaining) = tc.expected.extra.get("remaining_text") {
+        let expected = expected_remaining.as_str().unwrap_or_default().trim();
+        if remaining.trim() != expected {
+            failures.push(format!(
+                "remaining_text: expected {:?}, got {:?}",
+                expected,
+                remaining.trim()
+            ));
+        }
+    }
+
+    if let Some(expected_calls) = tc
+        .expected
+        .extra
+        .get("tool_calls")
+        .and_then(Value::as_sequence)
+    {
+        if calls.len() != expected_calls.len() {
+            failures.push(format!(
+                "tool_calls count: expected {}, got {}",
+                expected_calls.len(),
+                calls.len()
+            ));
+        } else {
+            for (i, (actual, expected)) in calls.iter().zip(expected_calls.iter()).enumerate() {
+                let exp_name = expected.get("name").and_then(Value::as_str).unwrap_or("");
+                if actual.name != exp_name {
+                    failures.push(format!(
+                        "tool_calls[{i}].name: expected {exp_name}, got {}",
+                        actual.name
+                    ));
+                }
+                if let Some(exp_args) = expected.get("arguments") {
+                    let exp_json: serde_json::Value =
+                        serde_json::from_str(&serde_json::to_string(exp_args).unwrap_or_default())
+                            .unwrap_or(serde_json::Value::Null);
+                    if actual.arguments != exp_json {
+                        failures.push(format!(
+                            "tool_calls[{i}].arguments: expected {exp_json:?}, got {:?}",
+                            actual.arguments
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
+}
+
 fn run_text_tool_prompt(tc: &TestCase) -> Result<(), Vec<String>> {
     use ai_lib_core::types::text_tool::{
         PromptLevel, StandardTextToolParser, TextToolConfig, TextToolParser,
@@ -1322,6 +1449,7 @@ fn compliance_text_tool_call() {
         for tc in cases {
             let result = match tc.input.test_type.as_str() {
                 "text_tool_parse" => run_text_tool_parse(&tc),
+                "text_tool_hybrid" => run_text_tool_hybrid(&tc),
                 "text_tool_prompt" => run_text_tool_prompt(&tc),
                 _ => continue,
             };
