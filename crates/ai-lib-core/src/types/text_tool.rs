@@ -371,6 +371,24 @@ fn dsml_parameter_re() -> &'static Regex {
     })
 }
 
+/// Merge overlapping/adjacent byte spans for markup removal.
+fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if spans.is_empty() {
+        return spans;
+    }
+    spans.sort_by_key(|(start, _)| *start);
+    let mut merged = vec![spans[0]];
+    for (start, end) in spans.into_iter().skip(1) {
+        let last = merged.last_mut().expect("merged non-empty");
+        if start <= last.1 {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
 /// Parse DeepSeek DSML text tool calls (`<｜｜DSML｜｜invoke>` / `<｜｜DSML｜｜parameter>`).
 fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     let mut tool_calls = Vec::new();
@@ -410,18 +428,18 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
         spans_to_remove.push((full.start(), full.end()));
     }
 
-    // Prefer removing the outer DSML wrapper as one span when present.
+    // Remove every DSML wrapper block (models may emit multiple per turn).
     let wrapper_re = Regex::new(&format!(
         r"(?s)<{DSML_TAG}tool_calls>\s*(.*?)\s*</{DSML_TAG}tool_calls>"
     ))
     .expect("valid dsml tool_calls wrapper regex");
-    if !tool_calls.is_empty() {
-        if let Some(caps) = wrapper_re.captures(text) {
-            if let Some(full) = caps.get(0) {
-                spans_to_remove = vec![(full.start(), full.end())];
-            }
+    for caps in wrapper_re.captures_iter(text) {
+        if let Some(full) = caps.get(0) {
+            spans_to_remove.push((full.start(), full.end()));
         }
     }
+
+    spans_to_remove = merge_spans(spans_to_remove);
 
     (tool_calls, spans_to_remove)
 }
@@ -794,6 +812,31 @@ mod tests {
         let (_, calls) = parse_hybrid_tool_calls(&parser, text, &native);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "shell");
+    }
+
+    #[test]
+    fn lenient_deepseek_dsml_multiple_blocks() {
+        let tag = DSML_TAG;
+        let text = format!(
+            "intro\n\
+             <{tag}tool_calls>\n\
+             <{tag}invoke name=\"file_read\">\n\
+             <{tag}parameter name=\"file_path\" string=\"true\">/tmp/a</{tag}parameter>\n\
+             </{tag}invoke>\n\
+             </{tag}tool_calls>\n\
+             middle\n\
+             <{tag}tool_calls>\n\
+             <{tag}invoke name=\"shell\">\n\
+             <{tag}parameter name=\"command\" string=\"true\">grep foo</{tag}parameter>\n\
+             </{tag}invoke>\n\
+             </{tag}tool_calls>\n\
+             outro"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(remaining, "intro\nmiddle\noutro");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "file_read");
+        assert_eq!(calls[1].name, "shell");
     }
 
     #[test]
