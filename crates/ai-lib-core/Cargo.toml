@@ -1,6 +1,6 @@
 [package]
 name = "ai-lib-core"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["AI-Protocol Team"]
 license = "MIT OR Apache-2.0"
