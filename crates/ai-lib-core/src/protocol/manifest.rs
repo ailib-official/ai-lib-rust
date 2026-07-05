@@ -94,6 +94,14 @@ pub struct ProtocolManifest {
 }
 
 impl ProtocolManifest {
+    /// Unified `tool_calling` block: V2 nests under `capabilities`; root-level keys may land in `extra`.
+    pub fn tool_calling(&self) -> Option<&serde_json::Value> {
+        self.capabilities
+            .tool_calling
+            .as_ref()
+            .or_else(|| self.extra.get("tool_calling"))
+    }
+
     /// Check if protocol supports a specific capability
     pub fn supports_capability(&self, capability: &str) -> bool {
         match capability {

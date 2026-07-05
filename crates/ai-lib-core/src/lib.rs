@@ -63,8 +63,8 @@ pub use types::{
 };
 
 pub use types::text_tool::{
-    detect_text_tool_deviation, parse_hybrid_tool_calls, PromptLevel, StandardTextToolParser,
-    TextToolConfig, TextToolDeviation, TextToolParser,
+    detect_text_tool_deviation, parse_hybrid_tool_calls, KnownDialect, NativeStrategy, PromptLevel,
+    StandardTextToolParser, TextToolConfig, TextToolDeviation, TextToolParser, ToolCallingPolicy,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

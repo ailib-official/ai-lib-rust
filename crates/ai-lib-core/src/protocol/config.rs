@@ -109,6 +109,9 @@ pub struct Capabilities {
     /// MCP client tool-bridge (`mcp_client` in V2 optional/required lists).
     #[serde(default, skip_serializing_if = "is_false")]
     pub mcp_client: bool,
+    /// VL-TTC / tool-calling manifest block (V2 `capabilities.tool_calling`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calling: Option<serde_json::Value>,
 }
 
 impl<'de> Deserialize<'de> for Capabilities {
@@ -150,6 +153,8 @@ impl<'de> Deserialize<'de> for Capabilities {
             optional: Vec<String>,
             #[serde(default)]
             feature_flags: Option<FeatureFlags>,
+            #[serde(default)]
+            tool_calling: Option<serde_json::Value>,
         }
 
         #[derive(Deserialize)]
@@ -173,6 +178,7 @@ impl<'de> Deserialize<'de> for Capabilities {
                 audio: false,
                 structured_output: false,
                 mcp_client: false,
+                tool_calling: None,
             };
             for t in tags {
                 match t.as_str() {
@@ -212,6 +218,7 @@ impl<'de> Deserialize<'de> for Capabilities {
                 audio: v.audio,
                 structured_output: false,
                 mcp_client: false,
+                tool_calling: None,
             }),
             Input::V2(v) => {
                 let has = |name: &str| {
@@ -229,6 +236,7 @@ impl<'de> Deserialize<'de> for Capabilities {
                     audio: has("audio"),
                     structured_output: has("structured_output") || flags.structured_output,
                     mcp_client: has("mcp_client"),
+                    tool_calling: v.tool_calling,
                 })
             }
         }
