@@ -48,6 +48,17 @@ pub struct TextToolConfig {
     /// Preferred JSON key for arguments when normalizing (from manifest args_key).
     #[serde(default)]
     pub args_key: Option<String>,
+    /// Manifest-declared L4 dialect tags (`known_dialects`).
+    #[serde(default)]
+    pub dialects: Vec<KnownDialect>,
+}
+
+/// Manifest `known_dialects` entry: XML tag → tool name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownDialect {
+    pub tag: String,
+    #[serde(default)]
+    pub map_to: String,
 }
 
 fn default_max_depth() -> u8 {
@@ -69,7 +80,95 @@ impl Default for TextToolConfig {
             prompt_level: PromptLevel::L1,
             locale: "en".to_string(),
             args_key: None,
+            dialects: Vec::new(),
         }
+    }
+}
+
+/// Native tool-calling strategy derived from manifest `tool_calling`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeStrategy {
+    /// Native API tools only; text fallback rarely needed.
+    Full,
+    /// Native API tools plus lenient text fallback (e.g. DeepSeek partial).
+    Hybrid,
+    /// Text-only protocol; do not send native tool specs.
+    TextOnly,
+}
+
+/// Runtime policy: dispatcher selection + manifest-backed parser.
+#[derive(Debug, Clone)]
+pub struct ToolCallingPolicy {
+    pub native_strategy: NativeStrategy,
+    pub parser: StandardTextToolParser,
+}
+
+impl ToolCallingPolicy {
+    /// Build policy from manifest `tool_calling` JSON (None → conservative text-only defaults).
+    pub fn from_tool_calling(tool_calling: Option<&serde_json::Value>) -> Self {
+        let parser = tool_calling
+            .map(StandardTextToolParser::from_manifest_tool_calling)
+            .unwrap_or_else(default_lenient_parser);
+        let native_strategy = tool_calling
+            .map(infer_native_strategy)
+            .unwrap_or(NativeStrategy::TextOnly);
+        Self {
+            native_strategy,
+            parser,
+        }
+    }
+
+    /// Whether the application should send native tool specs to the provider API.
+    pub fn send_native_tool_specs(&self) -> bool {
+        matches!(
+            self.native_strategy,
+            NativeStrategy::Full | NativeStrategy::Hybrid
+        )
+    }
+
+    /// Whether auto mode should prefer `NativeToolDispatcher` (hybrid text fallback).
+    pub fn prefer_native_dispatcher(&self) -> bool {
+        self.send_native_tool_specs()
+    }
+}
+
+fn default_lenient_parser() -> StandardTextToolParser {
+    StandardTextToolParser::new(TextToolConfig {
+        lenient_parsing: true,
+        prompt_level: PromptLevel::L2,
+        include_counterexamples: true,
+        ..Default::default()
+    })
+}
+
+fn infer_native_strategy(tool_calling: &serde_json::Value) -> NativeStrategy {
+    let native_supported = tool_calling
+        .get("native")
+        .and_then(|n| n.get("supported"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !native_supported {
+        return NativeStrategy::TextOnly;
+    }
+
+    let reliability = tool_calling
+        .get("native")
+        .and_then(|n| n.get("reliability"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unreliable");
+
+    let has_text_fallback = tool_calling
+        .get("text_fallback")
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
+
+    match reliability {
+        "full" => NativeStrategy::Full,
+        "partial" if has_text_fallback => NativeStrategy::Hybrid,
+        "partial" => NativeStrategy::Full,
+        _ if has_text_fallback => NativeStrategy::TextOnly,
+        _ => NativeStrategy::Full,
     }
 }
 
@@ -105,13 +204,34 @@ impl StandardTextToolParser {
         };
 
         if let Some(fallback) = tool_calling.get("text_fallback") {
-            if let Some(level) = fallback.get("prompt_level").and_then(|v| v.as_str()) {
-                config.prompt_level = PromptLevel::parse(level);
+            if fallback.is_null() {
+                // explicit null — no text fallback config
+            } else {
+                if let Some(level) = fallback.get("prompt_level").and_then(|v| v.as_str()) {
+                    config.prompt_level = PromptLevel::parse(level);
+                }
+                if let Some(key) = fallback.get("args_key").and_then(|v| v.as_str()) {
+                    config.args_key = Some(key.to_string());
+                }
+                if let Some(list) = fallback.get("known_dialects").and_then(|v| v.as_array()) {
+                    for entry in list {
+                        let tag = entry.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+                        if tag.is_empty() {
+                            continue;
+                        }
+                        let map_to = entry
+                            .get("map_to")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        config.dialects.push(KnownDialect {
+                            tag: tag.to_string(),
+                            map_to,
+                        });
+                    }
+                }
+                config.include_counterexamples = config.prompt_level != PromptLevel::L1;
             }
-            if let Some(key) = fallback.get("args_key").and_then(|v| v.as_str()) {
-                config.args_key = Some(key.to_string());
-            }
-            config.include_counterexamples = config.prompt_level != PromptLevel::L1;
         }
 
         if let Some(native) = tool_calling.get("native") {
@@ -149,7 +269,7 @@ pub fn detect_text_tool_deviation(text: &str) -> Option<TextToolDeviation> {
     if text.contains(DSML_TAG) {
         return Some(TextToolDeviation::DsmlDialect);
     }
-    if shell_dialect_re().is_match(text) {
+    if shell_dialect_re().is_match(text) || shell_plain_body_re().is_match(text) {
         return Some(TextToolDeviation::ShellDialect);
     }
     if bash_dialect_re().is_match(text) {
@@ -213,6 +333,13 @@ fn shell_dialect_re() -> &'static Regex {
     RE.get_or_init(|| {
         Regex::new(r"(?s)<shell>\s*<command>(.*?)</command>\s*</shell>")
             .expect("valid shell dialect regex")
+    })
+}
+
+fn shell_plain_body_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"(?s)<shell>\s*(.*?)\s*</shell>").expect("valid shell plain body regex")
     })
 }
 
@@ -318,7 +445,15 @@ fn extract_name_from_open_tag(full_match: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
-fn normalize_arguments(obj: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+fn normalize_arguments(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    preferred_key: Option<&str>,
+) -> serde_json::Value {
+    if let Some(key) = preferred_key {
+        if obj.contains_key(key) {
+            return obj.get(key).cloned().unwrap_or(serde_json::json!({}));
+        }
+    }
     if obj.contains_key("arguments") {
         return obj
             .get("arguments")
@@ -338,7 +473,11 @@ fn normalize_arguments(obj: &serde_json::Map<String, serde_json::Value>) -> serd
     serde_json::Value::Object(args)
 }
 
-fn parse_json_body(body: &str, attr_name: Option<String>) -> Option<(String, serde_json::Value)> {
+fn parse_json_body(
+    body: &str,
+    attr_name: Option<String>,
+    preferred_args_key: Option<&str>,
+) -> Option<(String, serde_json::Value)> {
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return None;
@@ -352,8 +491,88 @@ fn parse_json_body(body: &str, attr_name: Option<String>) -> Option<(String, ser
         .map(String::from)
         .or(attr_name)?;
 
-    let arguments = normalize_arguments(obj);
+    let arguments = normalize_arguments(obj, preferred_args_key);
     Some((name, arguments))
+}
+
+fn shell_tool_call(command: &str, map_to: &str, id: usize) -> ToolCall {
+    let name = if map_to.is_empty() {
+        "shell".to_string()
+    } else {
+        map_to.to_string()
+    };
+    ToolCall {
+        id: format!("text_tool_{id}"),
+        name,
+        arguments: serde_json::json!({ "command": command }),
+    }
+}
+
+fn try_parse_configured_dialects(
+    text: &str,
+    dialects: &[KnownDialect],
+) -> Option<(ToolCall, (usize, usize))> {
+    for dialect in dialects {
+        match dialect.tag.as_str() {
+            "shell" => {
+                if let Some(caps) = shell_dialect_re().captures(text) {
+                    let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                    let full = caps.get(0)?;
+                    return Some((
+                        shell_tool_call(cmd, &dialect.map_to, 0),
+                        (full.start(), full.end()),
+                    ));
+                }
+                if let Some(caps) = shell_plain_body_re().captures(text) {
+                    let body = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                    if body.starts_with("<command>") {
+                        continue;
+                    }
+                    let full = caps.get(0)?;
+                    return Some((
+                        shell_tool_call(body, &dialect.map_to, 0),
+                        (full.start(), full.end()),
+                    ));
+                }
+            }
+            "bash" => {
+                if let Some(caps) = bash_dialect_re().captures(text) {
+                    let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                    let full = caps.get(0)?;
+                    return Some((
+                        shell_tool_call(cmd, &dialect.map_to, 0),
+                        (full.start(), full.end()),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn try_parse_legacy_dialects(text: &str) -> Option<(ToolCall, (usize, usize))> {
+    if let Some(caps) = shell_dialect_re().captures(text) {
+        let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        let full = caps.get(0)?;
+        return Some((shell_tool_call(cmd, "shell", 0), (full.start(), full.end())));
+    }
+    if let Some(caps) = shell_plain_body_re().captures(text) {
+        let body = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        if !body.starts_with("<command>") {
+            let full = caps.get(0)?;
+            return Some((
+                shell_tool_call(body, "shell", 0),
+                (full.start(), full.end()),
+            ));
+        }
+    }
+    if let Some(caps) = bash_dialect_re().captures(text) {
+        let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        let full = caps.get(0)?;
+        return Some((shell_tool_call(cmd, "shell", 0), (full.start(), full.end())));
+    }
+    None
 }
 
 fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<ToolCall>) {
@@ -378,7 +597,9 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
             None
         };
 
-        if let Some((name, arguments)) = parse_json_body(body, attr_name) {
+        if let Some((name, arguments)) =
+            parse_json_body(body, attr_name, config.args_key.as_deref())
+        {
             let idx = tool_calls.len();
             tool_calls.push(ToolCall {
                 id: format!("text_tool_{idx}"),
@@ -395,26 +616,13 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
         if !dsml_calls.is_empty() {
             tool_calls.extend(dsml_calls);
             spans_to_remove.extend(dsml_spans);
-        } else if let Some(caps) = shell_dialect_re().captures(&remaining) {
-            let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-            tool_calls.push(ToolCall {
-                id: "text_tool_0".to_string(),
-                name: "shell".to_string(),
-                arguments: serde_json::json!({ "command": cmd }),
-            });
-            if let Some(full) = caps.get(0) {
-                spans_to_remove.push((full.start(), full.end()));
-            }
-        } else if let Some(caps) = bash_dialect_re().captures(&remaining) {
-            let cmd = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-            tool_calls.push(ToolCall {
-                id: "text_tool_0".to_string(),
-                name: "shell".to_string(),
-                arguments: serde_json::json!({ "command": cmd }),
-            });
-            if let Some(full) = caps.get(0) {
-                spans_to_remove.push((full.start(), full.end()));
-            }
+        } else if let Some((call, span)) = if !config.dialects.is_empty() {
+            try_parse_configured_dialects(&remaining, &config.dialects)
+        } else {
+            try_parse_legacy_dialects(&remaining)
+        } {
+            tool_calls.push(call);
+            spans_to_remove.push(span);
         }
     }
 
@@ -631,5 +839,49 @@ mod tests {
         assert!(prompt.contains("<tool_call>"));
         assert!(prompt.contains("WILL BE IGNORED"));
         assert!(prompt.contains("shell"));
+    }
+
+    #[test]
+    fn lenient_plain_shell_body_dialect() {
+        let text =
+            "让我检查一下。\n<shell>\nwhich opencode 2>/dev/null || echo \"not found\"\n</shell>";
+        let parser = StandardTextToolParser::from_manifest_tool_calling(&serde_json::json!({
+            "native": { "supported": true, "reliability": "partial" },
+            "text_fallback": {
+                "prompt_level": "L2",
+                "known_dialects": [{ "tag": "shell", "map_to": "shell" }]
+            }
+        }));
+        let (remaining, calls) = parser.parse(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "which opencode 2>/dev/null || echo \"not found\""
+        );
+        assert!(remaining.contains("让我检查一下"));
+    }
+
+    #[test]
+    fn tool_calling_policy_deepseek_partial_is_hybrid() {
+        let tc = serde_json::json!({
+            "native": { "supported": true, "reliability": "partial" },
+            "text_fallback": { "prompt_level": "L2", "known_dialects": [{ "tag": "shell", "map_to": "shell" }] }
+        });
+        let policy = ToolCallingPolicy::from_tool_calling(Some(&tc));
+        assert_eq!(policy.native_strategy, NativeStrategy::Hybrid);
+        assert!(policy.send_native_tool_specs());
+        assert!(policy.prefer_native_dispatcher());
+    }
+
+    #[test]
+    fn tool_calling_policy_text_only_when_no_native() {
+        let tc = serde_json::json!({
+            "native": { "supported": false },
+            "text_fallback": { "prompt_level": "L2" }
+        });
+        let policy = ToolCallingPolicy::from_tool_calling(Some(&tc));
+        assert_eq!(policy.native_strategy, NativeStrategy::TextOnly);
+        assert!(!policy.send_native_tool_specs());
     }
 }
