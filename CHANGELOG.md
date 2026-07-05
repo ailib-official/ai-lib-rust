@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.0.1 - 2026-07-05
+
+### Added
+
+- **TTC manifest runtime (ALR-TTC-004)**: `ProtocolManifest::tool_calling()` loads `capabilities.tool_calling` from ai-protocol manifests; `ToolCallingPolicy` selects native vs text-tool dispatch per model.
+- **DSML multi-block strip (#29)**: `parse_dsml_dialect` merges all `<｜｜DSML｜｜tool_calls>` blocks and removes every block from assistant `content`, preventing raw DSML leakage when models emit multiple tool-call sections.
+
+### Changed
+
+- Workspace crate versions aligned to **1.0.1** (`ai-lib-core` → `ai-lib-contact` → `ai-lib-rust`).
+
 ## 1.0.0 - 2026-07-01
 
 ### Milestone
