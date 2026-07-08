@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **HTTP transport proxy (ALR-TRN-001)**: direct route no longer calls `no_proxy()`; reqwest `auto_sys_proxy` honors `http_proxy` / `https_proxy` / `no_proxy`. `AI_PROXY_URL` is the only source for explicit failover routes (system proxy env vars are not duplicated).
+
 ## 1.0.1 - 2026-07-05
 
 ### Added
