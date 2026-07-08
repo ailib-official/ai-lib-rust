@@ -393,7 +393,7 @@ Provider-specific details vary, but `ai-lib-rust` normalizes them behind a unifi
 
 ## 🌐 Proxy / Timeout / Backpressure (Production knobs)
 
-- **Proxy**: set `AI_PROXY_URL` (e.g. `http://user:pass@host:port`)
+- **Proxy**: respects `http_proxy` / `https_proxy` / `no_proxy` env vars by default (reqwest `auto_sys_proxy`). Optional explicit failover route via `AI_PROXY_URL` (e.g. `http://user:pass@host:port`)
 - **HTTP timeout**: set `AI_HTTP_TIMEOUT_SECS` (fallback: `AI_TIMEOUT_SECS`)
 - **In-flight limit**: set `AI_LIB_MAX_INFLIGHT` or use `AiClientBuilder::max_inflight(n)`
 - **Rate limiting / circuit breaker** (policy layer): configure via `ai_lib_contact::resilience` (facade: `ai_lib_rust::resilience`) beside the client — `AiClient` no longer embeds breaker/rate-limiter wiring (see CHANGELOG 0.9.4).

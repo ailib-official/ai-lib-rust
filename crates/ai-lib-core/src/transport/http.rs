@@ -132,18 +132,22 @@ impl HttpTransport {
         })
     }
 
+    /// Explicit ai-lib proxy override routes for failover (see `build_routes`).
+    ///
+    /// Standard `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` env vars are handled by
+    /// reqwest's default `auto_sys_proxy` on the direct route — not duplicated here.
     fn proxy_candidates() -> Vec<String> {
-        let mut seen = HashSet::new();
-        let mut out = Vec::new();
-        for key in ["AI_PROXY_URL", "HTTPS_PROXY", "HTTP_PROXY"] {
-            if let Ok(value) = env::var(key) {
+        match env::var("AI_PROXY_URL") {
+            Ok(value) => {
                 let trimmed = value.trim();
-                if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
-                    out.push(trimmed.to_string());
+                if trimmed.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![trimmed.to_string()]
                 }
             }
+            Err(_) => Vec::new(),
         }
-        out
     }
 
     fn client_builder(has_failover_routes: bool) -> reqwest::ClientBuilder {
@@ -181,6 +185,12 @@ impl HttpTransport {
             .http2_keep_alive_timeout(Duration::from_secs(10))
     }
 
+    /// Build an HTTP client for a transport route.
+    ///
+    /// When `proxy_url` is `None` (the direct route), reqwest's default
+    /// `auto_sys_proxy` remains enabled so `http_proxy` / `https_proxy` /
+    /// `no_proxy` env vars are respected. When `proxy_url` is set, that URL is
+    /// used as an explicit override for the failover route labeled `proxy:…`.
     fn build_client(proxy_url: Option<&str>, has_failover_routes: bool) -> Result<reqwest::Client> {
         let mut builder = Self::client_builder(has_failover_routes);
         if let Some(proxy_url) = proxy_url {
@@ -188,8 +198,6 @@ impl HttpTransport {
                 crate::Error::Transport(crate::transport::TransportError::Other(e.to_string()))
             })?;
             builder = builder.proxy(proxy);
-        } else {
-            builder = builder.no_proxy();
         }
 
         builder.build().map_err(|e| {
@@ -509,5 +517,135 @@ mod tests {
             .get("authorization")
             .expect("authorization header set");
         assert_eq!(auth_header, "Bearer ut-secret");
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let previous = env::var(key).ok();
+            match value {
+                Some(v) => env::set_var(key, v),
+                None => env::remove_var(key),
+            }
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => env::set_var(self.key, value),
+                None => env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn with_proxy_env<F>(vars: &[(&'static str, Option<&'static str>)], f: F)
+    where
+        F: FnOnce(),
+    {
+        static PROXY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _lock = PROXY_ENV_LOCK.lock().expect("proxy env lock");
+        let guards: Vec<EnvGuard> = vars
+            .iter()
+            .map(|(key, value)| EnvGuard::set(key, *value))
+            .collect();
+        let _guards = guards;
+        f();
+    }
+
+    #[test]
+    fn build_routes_direct_only_without_ai_proxy_url() {
+        with_proxy_env(
+            &[
+                ("AI_PROXY_URL", None),
+                ("HTTP_PROXY", None),
+                ("HTTPS_PROXY", None),
+            ],
+            || {
+                let routes = HttpTransport::build_routes().expect("routes");
+                assert_eq!(routes.len(), 1);
+                assert_eq!(routes[0].label, "direct");
+            },
+        );
+    }
+
+    #[test]
+    fn build_routes_adds_ai_proxy_url_failover_route() {
+        with_proxy_env(
+            &[
+                ("AI_PROXY_URL", Some("http://proxy.example:8080")),
+                ("HTTP_PROXY", Some("http://ignored-for-candidates:3128")),
+            ],
+            || {
+                let routes = HttpTransport::build_routes().expect("routes");
+                assert_eq!(routes.len(), 2);
+                assert_eq!(routes[0].label, "direct");
+                assert_eq!(routes[1].label, "proxy:http://proxy.example:8080");
+            },
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn direct_route_honors_http_proxy_env_var() {
+        static PROXY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _lock = PROXY_ENV_LOCK.lock().expect("proxy env lock");
+        let guards = [
+            EnvGuard::set("AI_PROXY_URL", None),
+            EnvGuard::set("HTTP_PROXY", Some("http://127.0.0.1:9")),
+            EnvGuard::set("HTTPS_PROXY", None),
+            EnvGuard::set("NO_PROXY", None),
+        ];
+        let _guards = guards;
+
+        let direct = HttpTransport::build_client(None, false).expect("direct client");
+        let default = reqwest::Client::builder()
+            .build()
+            .expect("default reqwest client");
+        let no_proxy = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("no_proxy client");
+
+        let direct_err = direct
+            .get("https://example.invalid")
+            .send()
+            .await
+            .expect_err("direct route should fail")
+            .to_string();
+        let default_err = default
+            .get("https://example.invalid")
+            .send()
+            .await
+            .expect_err("default client should fail")
+            .to_string();
+        let no_proxy_err = no_proxy
+            .get("https://example.invalid")
+            .send()
+            .await
+            .expect_err("no_proxy route should fail")
+            .to_string();
+
+        assert_eq!(
+            direct_err, default_err,
+            "direct route should match reqwest default proxy policy"
+        );
+        assert_ne!(
+            direct_err, no_proxy_err,
+            "direct route must not call no_proxy()"
+        );
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn direct_route_builds_without_explicit_no_proxy() {
+        with_proxy_env(&[("HTTP_PROXY", Some("http://127.0.0.1:9"))], || {
+            HttpTransport::build_client(None, false).expect("direct client builds");
+        });
     }
 }
