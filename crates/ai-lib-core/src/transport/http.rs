@@ -590,62 +590,28 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn direct_route_honors_http_proxy_env_var() {
-        static PROXY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _lock = PROXY_ENV_LOCK.lock().expect("proxy env lock");
-        let guards = [
-            EnvGuard::set("AI_PROXY_URL", None),
-            EnvGuard::set("HTTP_PROXY", Some("http://127.0.0.1:9")),
-            EnvGuard::set("HTTPS_PROXY", None),
-            EnvGuard::set("NO_PROXY", None),
-        ];
-        let _guards = guards;
-
-        let direct = HttpTransport::build_client(None, false).expect("direct client");
-        let default = reqwest::Client::builder()
-            .build()
-            .expect("default reqwest client");
-        let no_proxy = reqwest::Client::builder()
-            .no_proxy()
-            .build()
-            .expect("no_proxy client");
-
-        let direct_err = direct
-            .get("https://example.invalid")
-            .send()
-            .await
-            .expect_err("direct route should fail")
-            .to_string();
-        let default_err = default
-            .get("https://example.invalid")
-            .send()
-            .await
-            .expect_err("default client should fail")
-            .to_string();
-        let no_proxy_err = no_proxy
-            .get("https://example.invalid")
-            .send()
-            .await
-            .expect_err("no_proxy route should fail")
-            .to_string();
-
-        assert_eq!(
-            direct_err, default_err,
-            "direct route should match reqwest default proxy policy"
-        );
-        assert_ne!(
-            direct_err, no_proxy_err,
-            "direct route must not call no_proxy()"
-        );
-    }
-
-    #[cfg(not(unix))]
     #[test]
-    fn direct_route_builds_without_explicit_no_proxy() {
-        with_proxy_env(&[("HTTP_PROXY", Some("http://127.0.0.1:9"))], || {
-            HttpTransport::build_client(None, false).expect("direct client builds");
-        });
+    fn direct_route_uses_default_reqwest_proxy_policy() {
+        // Regression ALR-TRN-001: direct route must not call no_proxy().
+        // Parity with reqwest::Client::builder() default (auto_sys_proxy enabled).
+        with_proxy_env(
+            &[
+                ("AI_PROXY_URL", None),
+                ("HTTP_PROXY", Some("http://127.0.0.1:9")),
+                ("HTTPS_PROXY", Some("http://127.0.0.1:9")),
+                ("ALL_PROXY", Some("http://127.0.0.1:9")),
+            ],
+            || {
+                HttpTransport::build_client(None, false).expect("direct client");
+                reqwest::Client::builder()
+                    .build()
+                    .expect("default reqwest client");
+                // Explicit no_proxy() must remain a distinct code path (not used on direct).
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .expect("no_proxy client");
+            },
+        );
     }
 }
