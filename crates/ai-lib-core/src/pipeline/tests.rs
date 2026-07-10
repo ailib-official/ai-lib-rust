@@ -9,7 +9,7 @@ mod pipeline_tests {
 
     #[tokio::test]
     async fn test_selector_filtering() {
-        let selector = select::Selector::new("choices.0.delta.content".to_string());
+        let selector = select::Selector::try_new("choices.0.delta.content".to_string()).unwrap();
 
         // Input: Stream of simple frames simulating a chunked response
         let input_data = vec![
