@@ -388,16 +388,9 @@ impl OutputValidator {
         }
 
         // additionalProperties as schema
-        if let Some(additional_schema) =
-            schema.get("additionalProperties").and_then(
-                |a| {
-                    if a.is_boolean() {
-                        None
-                    } else {
-                        Some(a)
-                    }
-                },
-            )
+        if let Some(additional_schema) = schema
+            .get("additionalProperties")
+            .filter(|a| !a.is_boolean())
         {
             let allowed_keys: HashSet<&str> = properties.keys().map(|k| k.as_str()).collect();
             for (key, value) in obj {

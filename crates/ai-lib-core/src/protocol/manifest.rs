@@ -192,11 +192,12 @@ impl ProtocolManifest {
             .get("messages")
             .map(|s| s.as_str())
             .unwrap_or("messages");
-        let messages: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .map(|m| serde_json::to_value(m).unwrap())
-            .collect();
+        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(request.messages.len());
+        for m in &request.messages {
+            messages.push(serde_json::to_value(m).map_err(|e| {
+                ProtocolError::ValidationError(format!("Failed to serialize message: {}", e))
+            })?);
+        }
         PathMapper::set_path(
             &mut provider_request,
             messages_path,
@@ -207,10 +208,15 @@ impl ProtocolManifest {
         // Map tools if present
         if let Some(tools) = &request.tools {
             if let Some(mapped) = self.parameter_mappings.get("tools") {
-                let tools_value: Vec<serde_json::Value> = tools
-                    .iter()
-                    .map(|t| serde_json::to_value(t).unwrap())
-                    .collect();
+                let mut tools_value: Vec<serde_json::Value> = Vec::with_capacity(tools.len());
+                for t in tools {
+                    tools_value.push(serde_json::to_value(t).map_err(|e| {
+                        ProtocolError::ValidationError(format!(
+                            "Failed to serialize tool definition: {}",
+                            e
+                        ))
+                    })?);
+                }
                 PathMapper::set_path(
                     &mut provider_request,
                     mapped,
