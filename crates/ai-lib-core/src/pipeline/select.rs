@@ -12,14 +12,17 @@ pub struct Selector {
 }
 
 impl Selector {
-    pub fn new(path: String) -> Self {
-        let evaluator =
-            crate::utils::json_path::JsonPathEvaluator::new(&path).unwrap_or_else(|_| {
-                // Fallback for simple paths if evaluator creation fails
-                crate::utils::json_path::JsonPathEvaluator::new(&format!("exists({})", path))
-                    .unwrap()
-            });
-        Self { path, evaluator }
+    pub fn try_new(path: String) -> Result<Self, PipelineError> {
+        let evaluator = crate::utils::json_path::JsonPathEvaluator::new(&path).or_else(|_| {
+            // Fallback for simple paths if evaluator creation fails
+            crate::utils::json_path::JsonPathEvaluator::new(&format!("exists({})", path))
+        }).map_err(|e| {
+            PipelineError::Configuration(format!(
+                "Invalid frame_selector path '{}': {}",
+                path, e
+            ))
+        })?;
+        Ok(Self { path, evaluator })
     }
 }
 
@@ -65,5 +68,5 @@ impl Transform for Selector {
 }
 
 pub fn create_selector(path: &str) -> Result<Box<dyn Transform>, PipelineError> {
-    Ok(Box::new(Selector::new(path.to_string())))
+    Ok(Box::new(Selector::try_new(path.to_string())?))
 }
