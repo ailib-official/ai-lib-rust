@@ -166,22 +166,39 @@ pub struct EmbeddingModel {
 }
 
 impl EmbeddingModel {
-    pub fn text_embedding_3_small() -> Self {
+    /// Illustrative catalog entry — not a production default; prefer manifest metadata.
+    pub fn example_small(provider: impl Into<String>) -> Self {
         Self {
             id: "text-embedding-3-small".into(),
-            name: "Text Embedding 3 Small".into(),
+            name: "Text Embedding 3 Small (example)".into(),
             max_input_tokens: 8191,
             dimensions: 1536,
-            provider: "openai".into(),
+            provider: provider.into(),
         }
     }
-    pub fn text_embedding_3_large() -> Self {
+    /// Illustrative catalog entry — not a production default; prefer manifest metadata.
+    pub fn example_large(provider: impl Into<String>) -> Self {
         Self {
             id: "text-embedding-3-large".into(),
-            name: "Text Embedding 3 Large".into(),
+            name: "Text Embedding 3 Large (example)".into(),
             max_input_tokens: 8191,
             dimensions: 3072,
-            provider: "openai".into(),
+            provider: provider.into(),
         }
+    }
+
+    #[deprecated(
+        since = "1.1.0",
+        note = "use example_small(provider) or manifest-derived metadata; hardcoded openai provider violates ARCH-001"
+    )]
+    pub fn text_embedding_3_small() -> Self {
+        Self::example_small("openai")
+    }
+    #[deprecated(
+        since = "1.1.0",
+        note = "use example_large(provider) or manifest-derived metadata; hardcoded openai provider violates ARCH-001"
+    )]
+    pub fn text_embedding_3_large() -> Self {
+        Self::example_large("openai")
     }
 }

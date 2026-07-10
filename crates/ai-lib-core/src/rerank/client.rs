@@ -1,6 +1,11 @@
 //! Rerank client for document relevance scoring.
+//!
+//! Protocol-driven construction: prefer [`RerankerClientBuilder::from_manifest`] /
+//! [`RerankerClientBuilder::from_model`]. No silent Cohere host default ([ARCH-001]).
 
 use super::types::{RerankOptions, RerankResult};
+use crate::credentials::{self, resolve_credential};
+use crate::protocol::{ProtocolLoader, ProtocolManifest};
 use crate::{Error, ErrorContext, Result};
 
 /// Client for document reranking.
@@ -23,11 +28,7 @@ impl RerankerClient {
         documents: &[impl AsRef<str>],
         options: &RerankOptions,
     ) -> Result<Vec<RerankResult>> {
-        let endpoint = format!(
-            "{}{}",
-            self.base_url.trim_end_matches('/'),
-            self.endpoint_path
-        );
+        let endpoint = join_url(&self.base_url, &self.endpoint_path);
         let docs: Vec<String> = documents.iter().map(|d| d.as_ref().to_string()).collect();
         let mut body = serde_json::json!({
             "model": self.model,
@@ -99,12 +100,37 @@ impl RerankerClient {
     }
 }
 
+fn join_url(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{}", path)
+    };
+    format!("{}{}", base, path)
+}
+
+fn rerank_path_from_manifest(manifest: &ProtocolManifest) -> String {
+    if let Some(eps) = &manifest.endpoints {
+        if let Some(ep) = eps.get("rerank") {
+            return ep.path.clone();
+        }
+    }
+    if let Some(services) = &manifest.services {
+        if let Some(svc) = services.get("rerank") {
+            return svc.path.clone();
+        }
+    }
+    "/rerank".to_string()
+}
+
 pub struct RerankerClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
     endpoint_path: Option<String>,
     timeout_secs: u64,
+    protocol_path: Option<String>,
 }
 
 impl RerankerClientBuilder {
@@ -115,6 +141,7 @@ impl RerankerClientBuilder {
             base_url: None,
             endpoint_path: None,
             timeout_secs: 60,
+            protocol_path: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -133,18 +160,66 @@ impl RerankerClientBuilder {
         self.endpoint_path = Some(path.into());
         self
     }
+    pub fn protocol_path(mut self, path: impl Into<String>) -> Self {
+        self.protocol_path = Some(path.into());
+        self
+    }
+
+    pub fn from_manifest(
+        mut self,
+        manifest: &ProtocolManifest,
+        model_id: impl Into<String>,
+    ) -> Result<Self> {
+        let cred = resolve_credential(manifest, self.api_key.as_deref());
+        let secret = cred.secret().ok_or_else(|| {
+            Error::configuration(format!(
+                "API key required for rerank (provider={}; tried {:?})",
+                credentials::provider_id(manifest),
+                cred.required_envs
+                    .iter()
+                    .chain(cred.conventional_envs.iter())
+                    .cloned()
+                    .collect::<Vec<_>>()
+            ))
+        })?;
+        self.api_key = Some(secret.to_string());
+        self.base_url = Some(manifest.get_base_url().to_string());
+        if self.endpoint_path.is_none() {
+            self.endpoint_path = Some(rerank_path_from_manifest(manifest));
+        }
+        self.model = Some(model_id.into());
+        Ok(self)
+    }
+
+    pub async fn from_model(self, model: &str) -> Result<RerankerClient> {
+        let mut loader = ProtocolLoader::new();
+        if let Some(path) = &self.protocol_path {
+            loader = loader.with_base_path(path);
+        }
+        let manifest = loader.load_model(model).await.map_err(Error::Protocol)?;
+        let parts: Vec<&str> = model.split('/').collect();
+        let model_id = if parts.len() >= 2 {
+            parts[1..].join("/")
+        } else {
+            model.to_string()
+        };
+        self.from_manifest(&manifest, model_id)?.build().await
+    }
 
     pub async fn build(self) -> Result<RerankerClient> {
         let model = self
             .model
             .ok_or_else(|| Error::configuration("Model must be specified"))?;
-        let api_key = self
-            .api_key
-            .or_else(|| std::env::var("COHERE_API_KEY").ok())
-            .ok_or_else(|| Error::configuration("API key required (COHERE_API_KEY)"))?;
-        let base_url = self
-            .base_url
-            .unwrap_or_else(|| "https://api.cohere.com/v2".to_string());
+        let api_key = self.api_key.ok_or_else(|| {
+            Error::configuration(
+                "API key required: use from_manifest/from_model or set api_key explicitly",
+            )
+        })?;
+        let base_url = self.base_url.ok_or_else(|| {
+            Error::configuration(
+                "base_url required: use from_manifest/from_model or set base_url explicitly (no vendor default)",
+            )
+        })?;
         let endpoint_path = self.endpoint_path.unwrap_or_else(|| "/rerank".to_string());
         let endpoint_path = if endpoint_path.starts_with('/') {
             endpoint_path
@@ -168,5 +243,21 @@ impl RerankerClientBuilder {
 impl Default for RerankerClientBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn build_without_base_url_errors() {
+        let err = RerankerClient::builder()
+            .model("rerank-v3")
+            .api_key("k")
+            .build()
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("base_url"));
     }
 }

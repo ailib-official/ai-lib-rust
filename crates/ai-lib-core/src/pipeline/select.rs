@@ -13,15 +13,17 @@ pub struct Selector {
 
 impl Selector {
     pub fn try_new(path: String) -> Result<Self, PipelineError> {
-        let evaluator = crate::utils::json_path::JsonPathEvaluator::new(&path).or_else(|_| {
-            // Fallback for simple paths if evaluator creation fails
-            crate::utils::json_path::JsonPathEvaluator::new(&format!("exists({})", path))
-        }).map_err(|e| {
-            PipelineError::Configuration(format!(
-                "Invalid frame_selector path '{}': {}",
-                path, e
-            ))
-        })?;
+        let evaluator = crate::utils::json_path::JsonPathEvaluator::new(&path)
+            .or_else(|_| {
+                // Fallback for simple paths if evaluator creation fails
+                crate::utils::json_path::JsonPathEvaluator::new(&format!("exists({})", path))
+            })
+            .map_err(|e| {
+                PipelineError::Configuration(format!(
+                    "Invalid frame_selector path '{}': {}",
+                    path, e
+                ))
+            })?;
         Ok(Self { path, evaluator })
     }
 }
