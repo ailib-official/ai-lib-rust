@@ -15,6 +15,7 @@ use crate::{BoxStream, PipeResult};
 use futures::{stream, StreamExt};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use tracing::debug;
 
 #[derive(Clone)]
@@ -204,10 +205,11 @@ impl Mapper for RuleBasedEventMapper {
         &self,
         input: BoxStream<'static, Value>,
     ) -> PipeResult<BoxStream<'static, StreamingEvent>> {
-        let rules = self.rules.clone();
+        // Arc so each stream poll only clones a pointer, not the compiled rule vec.
+        let rules = Arc::new(self.rules.clone());
 
         let mapped = stream::unfold((input, false), move |(mut input, mut ended)| {
-            let rules = rules.clone();
+            let rules = Arc::clone(&rules);
             async move {
                 if ended {
                     return None;
@@ -216,7 +218,7 @@ impl Mapper for RuleBasedEventMapper {
                 while let Some(item) = input.next().await {
                     match item {
                         Ok(frame) => {
-                            for r in &rules {
+                            for r in rules.iter() {
                                 if r.matcher.matches(&frame) {
                                     if let Some(ev) = RuleBasedEventMapper::build_event(
                                         &r.emit, &frame, &r.extract,
@@ -469,10 +471,11 @@ impl Mapper for PathEventMapper {
         &self,
         input: BoxStream<'static, Value>,
     ) -> PipeResult<BoxStream<'static, StreamingEvent>> {
-        let content_path = self.content_path.clone();
-        let tool_call_path = self.tool_call_path.clone();
-        let usage_path = self.usage_path.clone();
-        let tool_use = self.tool_use.clone();
+        // Arc so each poll clones pointers, not path strings / tooling config.
+        let content_path = Arc::new(self.content_path.clone());
+        let tool_call_path = Arc::new(self.tool_call_path.clone());
+        let usage_path = Arc::new(self.usage_path.clone());
+        let tool_use = Arc::new(self.tool_use.clone());
 
         // State is local to each stream to avoid cross-request contamination.
         let stream = stream::unfold(
@@ -484,10 +487,10 @@ impl Mapper for PathEventMapper {
                 HashMap::<u32, String>::new(),
             ),
             move |(mut input, mut q, mut ended, mut started_ids, mut index_to_id)| {
-                let content_path = content_path.clone();
-                let tool_call_path = tool_call_path.clone();
-                let usage_path = usage_path.clone();
-                let tool_use = tool_use.clone();
+                let content_path = Arc::clone(&content_path);
+                let tool_call_path = Arc::clone(&tool_call_path);
+                let usage_path = Arc::clone(&usage_path);
+                let tool_use = Arc::clone(&tool_use);
                 async move {
                     if let Some(ev) = q.pop_front() {
                         return Some((Ok(ev), (input, q, ended, started_ids, index_to_id)));
@@ -500,9 +503,10 @@ impl Mapper for PathEventMapper {
                         match item {
                             Ok(frame) => {
                                 // content delta
-                                if let Some(content) =
-                                    crate::utils::PathMapper::get_string(&frame, &content_path)
-                                {
+                                if let Some(content) = crate::utils::PathMapper::get_string(
+                                    &frame,
+                                    content_path.as_str(),
+                                ) {
                                     if !content.is_empty() {
                                         q.push_back(StreamingEvent::PartialContentDelta {
                                             content,
@@ -513,7 +517,8 @@ impl Mapper for PathEventMapper {
 
                                 // usage
                                 if let Some(usage) =
-                                    crate::utils::PathMapper::get_path(&frame, &usage_path).cloned()
+                                    crate::utils::PathMapper::get_path(&frame, usage_path.as_str())
+                                        .cloned()
                                 {
                                     q.push_back(StreamingEvent::Metadata {
                                         usage: Some(usage),
@@ -523,9 +528,10 @@ impl Mapper for PathEventMapper {
                                 }
 
                                 // tool calls (OpenAI delta style)
-                                if let Some(tc_val) =
-                                    crate::utils::PathMapper::get_path(&frame, &tool_call_path)
-                                {
+                                if let Some(tc_val) = crate::utils::PathMapper::get_path(
+                                    &frame,
+                                    tool_call_path.as_str(),
+                                ) {
                                     if debug_toolcall_enabled() {
                                         debug!(
                                             tool_call_path = tool_call_path.as_str(),
@@ -545,7 +551,7 @@ impl Mapper for PathEventMapper {
 
                                             // Prefer protocol tooling mapping if present
                                             let (mut id, mut name, mut args) =
-                                                if let Some(ref tu) = tool_use {
+                                                if let Some(tu) = tool_use.as_ref() {
                                                     extract_by_tooling(tc, tu)
                                                 } else {
                                                     (None, None, None)

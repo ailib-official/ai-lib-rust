@@ -182,8 +182,13 @@ impl AiClient {
             // from spec.yaml. Transient errors (retryable) are typically fallbackable.
             let mut should_fallback = is_fallbackable_error_class(class.as_str());
 
-            let headers = resp.headers().clone();
-            let retry_after_ms = PreflightExt::retry_after_ms(self, &headers);
+            // Read header-derived fields before consuming the body (avoids HeaderMap clone).
+            let retry_after_ms = PreflightExt::retry_after_ms(self, resp.headers());
+            let upstream = PreflightExt::header_first(
+                self,
+                resp.headers(),
+                &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
+            );
             let body = resp.text().await.unwrap_or_default();
 
             // Extract provider error code once and reuse
@@ -214,20 +219,15 @@ impl AiClient {
                 "ai-lib-rust streaming request failed"
             );
 
-            let upstream = PreflightExt::header_first(
-                self,
-                &headers,
-                &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
-            );
             let mut context = crate::ErrorContext::new()
                 .with_status_code(status)
-                .with_request_id(client_request_id.clone())
+                .with_request_id(client_request_id)
                 .with_retryable(retryable)
                 .with_fallbackable(should_fallback)
                 .with_standard_code(std_code)
                 .with_source("execute_stream_once");
-            if let Some(ref ec) = provider_code {
-                context = context.with_error_code(ec.clone());
+            if let Some(ec) = provider_code {
+                context = context.with_error_code(ec);
             }
             if let Some(up) = upstream {
                 context = context.with_details(format!("upstream_id: {}", up));
@@ -312,7 +312,13 @@ impl AiClient {
         // For non-streaming requests, handle as complete JSON response
         if !request.stream {
             let status = resp.status().as_u16();
-            let headers = resp.headers().clone(); // Clone headers before consuming resp
+            // Capture header-derived fields before consuming the body (avoids HeaderMap clone).
+            let retry_after_ms = PreflightExt::retry_after_ms(self, resp.headers());
+            let upstream_from_headers = PreflightExt::header_first(
+                self,
+                resp.headers(),
+                &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
+            );
 
             // Status-based error classification
             if !resp.status().is_success() {
@@ -334,7 +340,6 @@ impl AiClient {
                     .and_then(|p| p.retry_on_http_status.as_ref())
                     .map(|v: &Vec<u16>| v.contains(&status))
                     .unwrap_or(false);
-                let retry_after_ms = PreflightExt::retry_after_ms(self, &headers);
 
                 // Extract provider error code once and derive standard code
                 let provider_code = self.error_code_from_body(&body);
@@ -353,15 +358,11 @@ impl AiClient {
                     .with_standard_code(std_code)
                     .with_source("execution_once");
 
-                if let Some(upstream_id) = PreflightExt::header_first(
-                    self,
-                    &headers,
-                    &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
-                ) {
+                if let Some(upstream_id) = upstream_from_headers {
                     context = context.with_details(format!("upstream_id: {}", upstream_id));
                 }
-                if let Some(ref ec) = provider_code {
-                    context = context.with_error_code(ec.clone());
+                if let Some(ec) = provider_code {
+                    context = context.with_error_code(ec);
                 }
 
                 return Err(Error::Remote {
@@ -395,11 +396,7 @@ impl AiClient {
             self.extract_nonstream_response(&json, &mut response);
 
             if last_upstream_request_id.is_none() {
-                last_upstream_request_id = PreflightExt::header_first(
-                    self,
-                    &headers,
-                    &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
-                );
+                last_upstream_request_id = upstream_from_headers;
             }
 
             let stats = CallStats {
@@ -438,10 +435,10 @@ impl AiClient {
             // from spec.yaml. Transient errors (retryable) are typically fallbackable.
             let mut should_fallback = is_fallbackable_error_class(class.as_str());
 
-            let headers = resp.headers().clone();
+            let retry_after_ms = PreflightExt::retry_after_ms(self, resp.headers());
             let request_id = PreflightExt::header_first(
                 self,
-                &headers,
+                resp.headers(),
                 &["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"],
             );
             let body = resp.text().await.unwrap_or_default();
@@ -461,7 +458,6 @@ impl AiClient {
                 .and_then(|p| p.retry_on_http_status.as_ref())
                 .map(|v: &Vec<u16>| v.contains(&status))
                 .unwrap_or(false);
-            let retry_after_ms = PreflightExt::retry_after_ms(self, &headers);
 
             // Derive V2 standard error code
             let std_code = provider_code
@@ -481,13 +477,13 @@ impl AiClient {
 
             let mut context = crate::ErrorContext::new()
                 .with_status_code(status)
-                .with_request_id(client_request_id.clone())
+                .with_request_id(client_request_id)
                 .with_retryable(retryable)
                 .with_fallbackable(should_fallback)
                 .with_standard_code(std_code)
                 .with_source("execute_once_streaming");
-            if let Some(ref ec) = provider_code {
-                context = context.with_error_code(ec.clone());
+            if let Some(ec) = provider_code {
+                context = context.with_error_code(ec);
             }
             if let Some(up) = request_id {
                 context = context.with_details(format!("upstream_id: {}", up));
