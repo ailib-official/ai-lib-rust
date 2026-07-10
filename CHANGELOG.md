@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.1.0 - 2026-07-10
+
+### Changed
+
+- Workspace crate versions aligned to **1.1.0** (`ai-lib-core` → `ai-lib-contact` → `ai-lib-rust`; wasm crates version-synced, still `publish = false`).
+- **AR-REVIEW remediation**: protocolize embeddings/rerank builders; illustrative pricing + `from_table`; remove schema `hiddenpath` pattern; `compile_request` / `Selector::try_new` error paths; split `ai-lib-wasm` lib into domain modules; reduce execution/event_map clone density.
+
 ### Fixed
 
 - **HTTP transport proxy (ALR-TRN-001)**: direct route no longer calls `no_proxy()`; reqwest `auto_sys_proxy` honors `http_proxy` / `https_proxy` / `no_proxy`. `AI_PROXY_URL` is the only source for explicit failover routes (system proxy env vars are not duplicated).
