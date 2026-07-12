@@ -20,18 +20,35 @@ pub trait EndpointExt {
     fn list_remote_models(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 }
 
+/// Resolve an operation name against a provider `endpoints` map.
+///
+/// Falls back from `chat` → `chat_openai` for dual-API manifests that omit the
+/// canonical `chat` key used by `AiClient` chat requests.
+pub(crate) fn lookup_endpoint<'a>(
+    endpoints: Option<&'a HashMap<String, EndpointConfig>>,
+    name: &str,
+) -> Option<&'a EndpointConfig> {
+    let endpoints = endpoints?;
+    if let Some(ep) = endpoints.get(name) {
+        return Some(ep);
+    }
+    if name == "chat" {
+        return endpoints.get("chat_openai");
+    }
+    None
+}
+
 impl EndpointExt for AiClient {
     fn resolve_endpoint(&self, name: &str) -> Result<&EndpointConfig> {
-        self.manifest
-            .endpoints
-            .as_ref()
-            .and_then(|eps: &HashMap<String, EndpointConfig>| eps.get(name))
-            .ok_or_else(|| {
-                Error::Protocol(ProtocolError::NotFound {
-                    id: name.to_string(),
-                    hint: None,
-                })
+        lookup_endpoint(self.manifest.endpoints.as_ref(), name).ok_or_else(|| {
+            Error::Protocol(ProtocolError::NotFound {
+                id: name.to_string(),
+                hint: Some(
+                    "Expected endpoints.<name> in the provider manifest (common keys: chat, chat_openai)"
+                        .to_string(),
+                ),
             })
+        })
     }
 
     /// Call a generic service by name.
@@ -87,5 +104,43 @@ impl EndpointExt for AiClient {
         };
 
         Ok(models)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ep(path: &str) -> EndpointConfig {
+        EndpointConfig {
+            path: path.to_string(),
+            method: "POST".to_string(),
+            adapter: Some("openai".to_string()),
+        }
+    }
+
+    #[test]
+    fn lookup_prefers_exact_chat_key() {
+        let mut map = HashMap::new();
+        map.insert("chat".to_string(), ep("/chat/completions"));
+        map.insert("chat_openai".to_string(), ep("/alt"));
+        let got = lookup_endpoint(Some(&map), "chat").expect("chat");
+        assert_eq!(got.path, "/chat/completions");
+    }
+
+    #[test]
+    fn lookup_falls_back_chat_to_chat_openai() {
+        let mut map = HashMap::new();
+        map.insert("chat_openai".to_string(), ep("/chat/completions"));
+        map.insert("chat_anthropic".to_string(), ep("/anthropic/v1/messages"));
+        let got = lookup_endpoint(Some(&map), "chat").expect("chat via alias");
+        assert_eq!(got.path, "/chat/completions");
+    }
+
+    #[test]
+    fn lookup_missing_returns_none() {
+        let mut map = HashMap::new();
+        map.insert("embeddings".to_string(), ep("/embeddings"));
+        assert!(lookup_endpoint(Some(&map), "chat").is_none());
     }
 }
