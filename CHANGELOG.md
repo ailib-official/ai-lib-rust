@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **Endpoint resolution**: `resolve_endpoint("chat")` falls back to `endpoints.chat_openai` when the canonical `chat` key is absent (DeepSeek v2 dual-API manifests). Prevents `Protocol not found: chat` for clients that always use operation `"chat"`.
+
 ## 1.1.0 - 2026-07-10
 
 ### Changed
