@@ -142,7 +142,7 @@ impl MessageAssembler {
             match layer {
                 ContextLayer::Background => {
                     // Newest first when deciding what to keep; output still chronological later.
-                    candidates.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                    candidates.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
                 }
                 ContextLayer::Summary | ContextLayer::Relevant => {
                     // Prefer is_summary=true under soft pressure (kept earlier in list).
