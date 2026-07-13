@@ -1,6 +1,7 @@
 use ai_lib_core::types::message::{ContentBlock, Message, MessageContent, MessageRole};
 
 use super::budget::{ContextBudget, ModelCapacity};
+use super::envelope::{AssembleStrategy, ContextLayer, MessageChunk};
 use super::error::AssembleError;
 use super::token_estimate::estimate_message_tokens;
 
@@ -25,9 +26,30 @@ impl Default for AssembleOptions {
     }
 }
 
+/// Options for layer-aware envelope assembly (CR-L1-001).
+#[derive(Debug, Clone)]
+pub struct LayeredAssembleOptions {
+    pub budget: ContextBudget,
+    pub strategy: AssembleStrategy,
+    pub tool_fold_threshold_chars: usize,
+    pub tool_placeholder: String,
+}
+
+impl Default for LayeredAssembleOptions {
+    fn default() -> Self {
+        Self {
+            budget: ContextBudget::from_capacity(ModelCapacity::UNKNOWN, 2),
+            strategy: AssembleStrategy::Chat,
+            tool_fold_threshold_chars: 8_192,
+            tool_placeholder: "[tool output truncated]".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AssembleReport {
     pub messages: Vec<Message>,
+    /// Flat path: suffix start index. Layered path: count of omitted chunks.
     pub dropped_prefix: usize,
     pub folded_tool_segments: usize,
 }
@@ -58,6 +80,102 @@ impl MessageAssembler {
         Ok(AssembleReport {
             messages: working[start..].to_vec(),
             dropped_prefix,
+            folded_tool_segments,
+        })
+    }
+
+    /// News-style Layer 0–5 fill. Archive (L5) is never expanded into the payload.
+    ///
+    /// Critical layers (System+Active) must fit; otherwise [`AssembleError::HardBudgetViolation`].
+    pub fn assemble_layered(
+        chunks: &[MessageChunk],
+        options: &LayeredAssembleOptions,
+    ) -> Result<AssembleReport, AssembleError> {
+        if chunks.is_empty() {
+            return Err(AssembleError::EmptyInput);
+        }
+
+        let mut working: Vec<MessageChunk> = chunks.to_vec();
+        let mut folded_tool_segments = 0usize;
+        for chunk in &mut working {
+            folded_tool_segments += fold_oversized_tool_content(
+                std::slice::from_mut(&mut chunk.message),
+                options.tool_fold_threshold_chars,
+                &options.tool_placeholder,
+            );
+        }
+
+        let budget = options.budget.max_input_tokens;
+        let critical: Vec<&MessageChunk> =
+            working.iter().filter(|c| c.layer.is_critical()).collect();
+        let critical_tokens: u32 = critical
+            .iter()
+            .map(|c| estimate_message_tokens(&c.message))
+            .sum();
+        if critical_tokens > budget {
+            return Err(AssembleError::HardBudgetViolation {
+                critical_tokens,
+                budget,
+            });
+        }
+
+        let mut selected: Vec<MessageChunk> = critical.into_iter().cloned().collect();
+        let mut used = critical_tokens;
+
+        // Soft layers: Relevant → Summary → Background (newest Background first when picking).
+        // Archive omitted. CodeFix prefers Relevant over Summary when both compete (fill order).
+        let soft_order = match options.strategy {
+            AssembleStrategy::Chat | AssembleStrategy::CodeFix => [
+                ContextLayer::Relevant,
+                ContextLayer::Summary,
+                ContextLayer::Background,
+            ],
+        };
+
+        for layer in soft_order {
+            let mut candidates: Vec<MessageChunk> = working
+                .iter()
+                .filter(|c| c.layer == layer)
+                .cloned()
+                .collect();
+
+            match layer {
+                ContextLayer::Background => {
+                    // Newest first when deciding what to keep; output still chronological later.
+                    candidates.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
+                }
+                ContextLayer::Summary | ContextLayer::Relevant => {
+                    // Prefer is_summary=true under soft pressure (kept earlier in list).
+                    candidates.sort_by(|a, b| {
+                        b.is_summary
+                            .cmp(&a.is_summary)
+                            .then_with(|| a.timestamp.cmp(&b.timestamp))
+                    });
+                }
+                _ => {}
+            }
+
+            for chunk in candidates {
+                let cost = estimate_message_tokens(&chunk.message);
+                if used.saturating_add(cost) > budget {
+                    continue;
+                }
+                used = used.saturating_add(cost);
+                selected.push(chunk);
+            }
+        }
+
+        let omitted = working.len().saturating_sub(selected.len());
+        selected.sort_by(|a, b| {
+            a.timestamp
+                .cmp(&b.timestamp)
+                .then_with(|| a.layer.cmp(&b.layer))
+                .then_with(|| a.chunk_id.cmp(&b.chunk_id))
+        });
+
+        Ok(AssembleReport {
+            messages: selected.into_iter().map(|c| c.message).collect(),
+            dropped_prefix: omitted,
             folded_tool_segments,
         })
     }
@@ -262,5 +380,121 @@ mod tests {
     fn token_estimate_heuristic() {
         assert_eq!(crate::context::estimate_tokens("abcd"), 1);
         assert_eq!(crate::context::estimate_tokens("abcdefgh"), 2);
+    }
+
+    fn layered_opts(budget: u32, strategy: AssembleStrategy) -> LayeredAssembleOptions {
+        LayeredAssembleOptions {
+            budget: ContextBudget::new(budget, 0, 1),
+            strategy,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn assemble_layered_empty_errors() {
+        let err =
+            MessageAssembler::assemble_layered(&[], &layered_opts(100, AssembleStrategy::Chat))
+                .unwrap_err();
+        assert_eq!(err, AssembleError::EmptyInput);
+    }
+
+    #[test]
+    fn assemble_layered_hard_budget_violation() {
+        let chunks = vec![
+            MessageChunk::new(
+                ContextLayer::System,
+                1,
+                Message::system("S".repeat(200)),
+                "sys",
+            ),
+            MessageChunk::new(
+                ContextLayer::Active,
+                2,
+                Message::user("A".repeat(200)),
+                "act",
+            ),
+        ];
+        // tokens ≫ small budget
+        let err =
+            MessageAssembler::assemble_layered(&chunks, &layered_opts(5, AssembleStrategy::Chat))
+                .unwrap_err();
+        match err {
+            AssembleError::HardBudgetViolation {
+                critical_tokens,
+                budget,
+            } => {
+                assert!(critical_tokens > budget);
+                assert_eq!(budget, 5);
+            }
+            other => panic!("expected HardBudgetViolation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assemble_layered_keeps_critical_and_drops_background_before_relevant() {
+        let chunks = vec![
+            MessageChunk::new(ContextLayer::System, 1, Message::system("sys"), "s"),
+            MessageChunk::new(ContextLayer::Active, 2, Message::user("ask"), "a"),
+            MessageChunk::new(
+                ContextLayer::Relevant,
+                3,
+                Message::user(format!("rel-{}", "r".repeat(40))),
+                "r1",
+            ),
+            MessageChunk::new(
+                ContextLayer::Background,
+                4,
+                Message::user(format!("bg-{}", "b".repeat(40))),
+                "b1",
+            ),
+            MessageChunk::new(
+                ContextLayer::Archive,
+                5,
+                Message::user("archive-should-omit"),
+                "arch",
+            ),
+        ];
+        // Budget fits critical + one soft chunk roughly; Relevant is filled before Background.
+        let report = MessageAssembler::assemble_layered(
+            &chunks,
+            &layered_opts(40, AssembleStrategy::CodeFix),
+        )
+        .unwrap();
+        let texts: Vec<String> = report
+            .messages
+            .iter()
+            .map(|m| match &m.content {
+                MessageContent::Text(t) => t.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t == "sys"));
+        assert!(texts.iter().any(|t| t == "ask"));
+        assert!(
+            texts.iter().any(|t| t.starts_with("rel-")),
+            "relevant should be preferred over background under tight budget: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("archive")),
+            "archive must not expand"
+        );
+    }
+
+    #[test]
+    fn assemble_layered_under_budget_includes_soft_layers() {
+        let chunks = vec![
+            MessageChunk::new(ContextLayer::System, 1, Message::system("sys"), "s"),
+            MessageChunk::new(ContextLayer::Active, 2, Message::user("ask"), "a"),
+            MessageChunk::new(ContextLayer::Relevant, 3, Message::user("rel"), "r")
+                .with_summary(true),
+            MessageChunk::new(ContextLayer::Background, 4, Message::user("old-bg"), "b"),
+        ];
+        let report = MessageAssembler::assemble_layered(
+            &chunks,
+            &layered_opts(10_000, AssembleStrategy::Chat),
+        )
+        .unwrap();
+        assert_eq!(report.dropped_prefix, 0);
+        assert_eq!(report.messages.len(), 4);
     }
 }
