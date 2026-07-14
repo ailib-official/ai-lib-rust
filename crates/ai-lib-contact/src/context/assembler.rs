@@ -87,6 +87,9 @@ impl MessageAssembler {
     /// News-style Layer 0–5 fill. Archive (L5) is never expanded into the payload.
     ///
     /// Critical layers (System+Active) must fit; otherwise [`AssembleError::HardBudgetViolation`].
+    ///
+    /// Async hosts should call [`Self::assemble_layered_async`] / [`super::AssemblePool`]
+    /// (CR-L3-001); those façades schedule this same function and do not fork semantics.
     pub fn assemble_layered(
         chunks: &[MessageChunk],
         options: &LayeredAssembleOptions,
