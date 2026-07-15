@@ -33,7 +33,7 @@ fn resolve_ai_protocol_root() -> PathBuf {
 #[test]
 fn consume_latest_v2_generative_manifests() {
     let root = resolve_ai_protocol_root();
-    let providers = ["google", "deepseek", "qwen", "doubao"];
+    let providers = ["gemini", "deepseek", "qwen", "doubao"];
 
     for provider in providers {
         let path = root.join(format!("v2/providers/{provider}.yaml"));
@@ -47,8 +47,13 @@ fn consume_latest_v2_generative_manifests() {
         assert!(manifest.is_v2(), "{provider} should be parsed as V2");
         assert_eq!(manifest.id, provider);
 
-        if provider == "google" {
+        if provider == "gemini" {
             assert_eq!(manifest.detect_api_style(), ApiStyle::GeminiGenerate);
+            let aliases = manifest.aliases.as_ref().expect("gemini aliases");
+            assert!(
+                aliases.iter().any(|a| a == "google"),
+                "gemini must declare google alias (PT-ARCH-005)"
+            );
         } else {
             assert_eq!(manifest.detect_api_style(), ApiStyle::OpenAiCompatible);
         }
@@ -61,7 +66,7 @@ fn consume_latest_v2_generative_manifests() {
 
         assert!(caps.supports_input(Modality::Text));
         assert!(caps.supports_output(Modality::Text));
-        if provider == "qwen" || provider == "google" {
+        if provider == "qwen" || provider == "gemini" {
             assert!(
                 caps.supports_input(Modality::Video),
                 "{provider} should support video input"
