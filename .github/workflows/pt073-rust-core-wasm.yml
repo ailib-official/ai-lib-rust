@@ -1,5 +1,5 @@
 # PT-073 (Wave-5): ai-lib-core compliance, E/P boundary (Rust), WASI wasm + wasmtime harness.
-# Order: EP check ‚Ü?core tests ‚Ü?wasm release build ‚Ü?wasmtime test ‚Ü?contact compile smoke.
+# Order: EP check ù?core tests ù?wasm release build ù?wasmtime test ù?contact compile smoke.
 
 name: PT-073 Rust (core + EP + WASM)
 
@@ -25,8 +25,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: tip @ PT-ARCH-005c (#34) ó gemini canonical + identity map
-          ref: 749cb825c99f03e9dc737294b41fd5f5552533b4
+          # PROTO-PIN: tip @ PT-ARCH-005d (#35) ó multi-family identity (gemini/moonshot/zhipu)
+          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
           path: ai-protocol
 
       - name: Install Rust (stable + wasm32-wasip1)
@@ -50,12 +50,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: E/P boundary ‚Ä?Rust core sources
+      - name: E/P boundary ù?Rust core sources
         run: |
           python "${{ github.workspace }}/ai-protocol/tests/compliance/ep-boundary/check_ep_boundary.py" \
             --rust-root "${{ github.workspace }}/ai-lib-rust"
 
-      - name: ai-lib-core ‚Ä?full test suite (incl. compliance_from_core)
+      - name: ai-lib-core ù?full test suite (incl. compliance_from_core)
         env:
           COMPLIANCE_DIR: ${{ github.workspace }}/ai-protocol/tests/compliance
         working-directory: ai-lib-rust
@@ -65,10 +65,10 @@ jobs:
         working-directory: ai-lib-rust
         run: cargo build -p ai-lib-wasm --target wasm32-wasip1 --release
 
-      - name: Wasmtime ‚Ä?protocol_loading + message_building harness
+      - name: Wasmtime ù?protocol_loading + message_building harness
         working-directory: ai-lib-rust
         run: cargo test -p ai-lib-wasmtime-harness --test wasm_compliance
 
-      - name: ai-lib-contact ‚Ä?compile tests (P-layer against core)
+      - name: ai-lib-contact ù?compile tests (P-layer against core)
         working-directory: ai-lib-rust
         run: cargo test -p ai-lib-contact --no-run
