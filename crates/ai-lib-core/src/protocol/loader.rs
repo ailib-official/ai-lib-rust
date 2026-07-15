@@ -105,15 +105,16 @@ impl ProtocolLoader {
         &self,
         provider_id: &str,
     ) -> Result<ProtocolManifest, ProtocolError> {
-        if let Ok(manifest) = self.load_provider_exact(provider_id).await {
-            return Ok(manifest);
+        match self.load_provider_exact(provider_id).await {
+            Ok(manifest) => return Ok(manifest),
+            // Only alias-resolve on missing files; do not mask ValidationError / LoadError.
+            Err(ProtocolError::NotFound { .. }) => {}
+            Err(other) => return Err(other),
         }
 
         if let Some(canonical) = self.resolve_canonical_provider_id(provider_id).await {
             if canonical != provider_id {
-                if let Ok(manifest) = self.load_provider_exact(&canonical).await {
-                    return Ok(manifest);
-                }
+                return self.load_provider_exact(&canonical).await;
             }
         }
 
