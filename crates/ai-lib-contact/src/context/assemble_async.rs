@@ -343,10 +343,14 @@ mod tests {
 
     #[tokio::test]
     async fn assemble_async_stress_concurrent_ok_matches_sync() {
+        // Hold permits briefly so 64-way submit reliably observes QueueFull.
+        // Without a test block, cheap under-budget work can finish before overlap
+        // (flake: ok=64 queue_full=0 on fast CI runners).
         let pool = AssemblePool::new(AssemblePoolConfig {
             max_in_flight: 4,
             timeout: Duration::from_secs(5),
-        });
+        })
+        .with_test_block(Duration::from_millis(40));
         let chunks = under_budget_chunks();
         let opts = layered_opts(10_000);
         let sync = MessageAssembler::assemble_layered(&chunks, &opts).unwrap();

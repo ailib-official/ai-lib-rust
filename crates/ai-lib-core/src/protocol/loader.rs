@@ -94,8 +94,40 @@ impl ProtocolLoader {
         Ok(manifest)
     }
 
-    /// Load provider configuration
+    /// Load provider configuration.
+    ///
+    /// Resolution (PT-ARCH-005 / ALR-ID-001):
+    /// 1. Exact match on `provider_id` as file stem / primary `id`
+    /// 2. If missing: resolve via published `dist/provider-identity.json` alias map
+    ///    (and retry with canonical id)
+    /// 3. Else fail closed (`NotFound`)
     pub async fn load_provider(
+        &self,
+        provider_id: &str,
+    ) -> Result<ProtocolManifest, ProtocolError> {
+        match self.load_provider_exact(provider_id).await {
+            Ok(manifest) => return Ok(manifest),
+            // Only alias-resolve on missing files; do not mask ValidationError / LoadError.
+            Err(ProtocolError::NotFound { .. }) => {}
+            Err(other) => return Err(other),
+        }
+
+        if let Some(canonical) = self.resolve_canonical_provider_id(provider_id).await {
+            if canonical != provider_id {
+                return self.load_provider_exact(&canonical).await;
+            }
+        }
+
+        Err(ProtocolError::NotFound {
+            id: provider_id.to_string(),
+            hint: Some(format!(
+                "Check if the provider file '{}.json' or '{}.yaml' exists, or that '{}' is listed as an alias in dist/provider-identity.json / manifest.aliases",
+                provider_id, provider_id, provider_id
+            )),
+        })
+    }
+
+    async fn load_provider_exact(
         &self,
         provider_id: &str,
     ) -> Result<ProtocolManifest, ProtocolError> {
@@ -222,6 +254,75 @@ impl ProtocolLoader {
         })
     }
 
+    /// Resolve an alias key to canonical provider id using published identity map
+    /// (`dist/provider-identity.json`, PT-ARCH-005c).
+    async fn resolve_canonical_provider_id(&self, key: &str) -> Option<String> {
+        for map_path in self.identity_map_candidates() {
+            if let Ok(raw) = std::fs::read_to_string(&map_path) {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                    if let Some(canonical) = canonical_from_identity_value(&value, key) {
+                        return Some(canonical);
+                    }
+                }
+            }
+        }
+
+        // Remote package surface (same pin as provider JSON last-resort).
+        let url = "https://raw.githubusercontent.com/ailib-official/ai-protocol/main/dist/provider-identity.json";
+        if let Ok(resp) = reqwest::get(url).await {
+            if resp.status().is_success() {
+                if let Ok(value) = resp.json::<serde_json::Value>().await {
+                    if let Some(canonical) = canonical_from_identity_value(&value, key) {
+                        return Some(canonical);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn identity_map_candidates(&self) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if let Some(ref base) = self.base_path {
+            roots.push(base.clone());
+        }
+        if let Ok(root) =
+            std::env::var("AI_PROTOCOL_DIR").or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
+        {
+            if !(root.starts_with("http://") || root.starts_with("https://")) {
+                roots.push(PathBuf::from(root));
+            }
+        }
+        roots.extend([
+            PathBuf::from("ai-protocol"),
+            PathBuf::from("../ai-protocol"),
+            PathBuf::from("../../ai-protocol"),
+            PathBuf::from("D:\\ai-protocol"),
+        ]);
+
+        let mut out = Vec::new();
+        for root in roots {
+            out.push(root.join("dist").join("provider-identity.json"));
+            out.push(root.join("v2").join("provider-identity.fixture.json"));
+        }
+        out
+    }
+}
+
+fn canonical_from_identity_value(value: &serde_json::Value, key: &str) -> Option<String> {
+    let canonical = value.get("canonical_id")?.as_str()?;
+    if key == canonical {
+        return Some(canonical.to_string());
+    }
+    let aliases = value.get("aliases")?.as_array()?;
+    if aliases.iter().any(|a| a.as_str() == Some(key)) {
+        return Some(canonical.to_string());
+    }
+    None
+}
+
+impl ProtocolLoader {
     /// Load protocol from local JSON file (Fast Path)
     async fn load_from_json_file(&self, path: &Path) -> Result<ProtocolManifest, ProtocolError> {
         let content = tokio::fs::read(path)
@@ -587,5 +688,44 @@ impl ProtocolRegistry {
 impl Default for ProtocolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod identity_alias_tests {
+    use super::*;
+
+    #[test]
+    fn canonical_from_identity_map_resolves_google_to_gemini() {
+        let value = serde_json::json!({
+            "canonical_id": "gemini",
+            "aliases": ["google"]
+        });
+        assert_eq!(
+            canonical_from_identity_value(&value, "google").as_deref(),
+            Some("gemini")
+        );
+        assert_eq!(
+            canonical_from_identity_value(&value, "gemini").as_deref(),
+            Some("gemini")
+        );
+        assert_eq!(canonical_from_identity_value(&value, "openai"), None);
+    }
+
+    #[tokio::test]
+    async fn load_provider_resolves_google_alias_to_gemini_manifest() {
+        let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
+        if !protocol_root.join("dist/v2/providers/gemini.json").exists() {
+            // Workspace without sibling ai-protocol checkout — skip.
+            return;
+        }
+        let loader = ProtocolLoader::new().with_base_path(&protocol_root);
+        let manifest = loader
+            .load_provider("google")
+            .await
+            .expect("google alias should resolve via provider-identity map");
+        assert_eq!(manifest.id, "gemini");
+        let aliases = manifest.aliases.as_ref().expect("aliases present");
+        assert!(aliases.iter().any(|a| a == "google"));
     }
 }

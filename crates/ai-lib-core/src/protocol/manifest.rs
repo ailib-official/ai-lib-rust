@@ -20,6 +20,9 @@ pub struct ProtocolManifest {
 
     // Required fields
     pub id: String,
+    /// Alternate lookup keys that resolve to this manifest's `id` (PT-ARCH-005).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aliases: Option<Vec<String>>,
     pub protocol_version: String,
     pub endpoint: EndpointDefinition,
     #[serde(default, skip_serializing_if = "Option::is_none")]

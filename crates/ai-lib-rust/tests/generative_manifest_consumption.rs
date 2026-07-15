@@ -33,22 +33,54 @@ fn resolve_ai_protocol_root() -> PathBuf {
 #[test]
 fn consume_latest_v2_generative_manifests() {
     let root = resolve_ai_protocol_root();
-    let providers = ["google", "deepseek", "qwen", "doubao"];
+    // CI PROTO-PIN is often ai-protocol@v1.0.0 (pre-PT-ARCH-005: google.yaml).
+    // Post-#31 tip uses gemini.yaml + aliases:[google]. Resolve either.
+    let providers: &[(&str, &[&str])] = &[
+        ("gemini_family", &["gemini", "google"]),
+        ("deepseek", &["deepseek"]),
+        ("qwen", &["qwen"]),
+        ("doubao", &["doubao"]),
+    ];
 
-    for provider in providers {
-        let path = root.join(format!("v2/providers/{provider}.yaml"));
-        let raw = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("failed reading {}: {e}", path.display());
-        });
+    for (label, candidates) in providers {
+        let (stem, path, raw) = candidates
+            .iter()
+            .map(|id| {
+                let path = root.join(format!("v2/providers/{id}.yaml"));
+                (id, path.clone(), fs::read_to_string(&path).ok())
+            })
+            .find_map(|(id, path, raw)| raw.map(|r| (*id, path, r)))
+            .unwrap_or_else(|| {
+                panic!(
+                    "failed reading v2 generative manifest for {label}; tried {:?} under {}",
+                    candidates,
+                    root.join("v2/providers").display()
+                )
+            });
+
         let manifest: ManifestV2 = serde_yaml::from_str(&raw).unwrap_or_else(|e| {
             panic!("failed parsing {}: {e}", path.display());
         });
 
-        assert!(manifest.is_v2(), "{provider} should be parsed as V2");
-        assert_eq!(manifest.id, provider);
+        assert!(manifest.is_v2(), "{label} should be parsed as V2");
+        assert_eq!(
+            manifest.id, stem,
+            "{label}: file stem {stem} should match manifest.id"
+        );
 
-        if provider == "google" {
+        if *label == "gemini_family" {
             assert_eq!(manifest.detect_api_style(), ApiStyle::GeminiGenerate);
+            // Tip protocol: canonical gemini + alias google. Legacy pin: id google, no aliases.
+            if manifest.id == "gemini" {
+                let aliases = manifest
+                    .aliases
+                    .as_ref()
+                    .expect("gemini aliases on tip protocol");
+                assert!(
+                    aliases.iter().any(|a| a == "google"),
+                    "gemini must declare google alias (PT-ARCH-005)"
+                );
+            }
         } else {
             assert_eq!(manifest.detect_api_style(), ApiStyle::OpenAiCompatible);
         }
@@ -61,10 +93,10 @@ fn consume_latest_v2_generative_manifests() {
 
         assert!(caps.supports_input(Modality::Text));
         assert!(caps.supports_output(Modality::Text));
-        if provider == "qwen" || provider == "google" {
+        if *label == "qwen" || *label == "gemini_family" {
             assert!(
                 caps.supports_input(Modality::Video),
-                "{provider} should support video input"
+                "{label} should support video input"
             );
         }
 
@@ -77,7 +109,7 @@ fn consume_latest_v2_generative_manifests() {
             .unwrap_or(false);
         assert!(
             !output_video_supported,
-            "{provider} output.video expected false in current P0 manifests"
+            "{label} output.video expected false in current P0 manifests"
         );
     }
 }
