@@ -203,9 +203,11 @@ pub fn create_decoder(cfg: &DecoderConfig) -> Result<Box<dyn Decoder>, PipelineE
         // Many providers (e.g. Anthropic) still speak SSE but differ in event semantics.
         // We keep this manifest-driven and treat it as standard SSE framing.
         "anthropic_sse" => Ok(Box::new(SseDecoder::from_config(cfg)?)),
+        // Gemini GenerateContent stream uses SSE framing with provider-specific event_map.
+        "gemini_sse" => Ok(Box::new(SseDecoder::from_config(cfg)?)),
         "ndjson" | "jsonl" => Ok(Box::new(NdjsonDecoder)),
         other => Err(PipelineError::Configuration(format!(
-            "Unsupported decoder format: {}. Supported formats: sse, jsonl, ndjson",
+            "Unsupported decoder format: {}. Supported formats: sse, anthropic_sse, gemini_sse, jsonl, ndjson",
             other
         ))),
     }

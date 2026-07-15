@@ -1,10 +1,24 @@
 use ai_lib_rust::AiClient;
 
+/// Prefer CI / developer `AI_PROTOCOL_DIR`; do not overwrite with a machine-local path.
+fn protocol_dir_for_tests() {
+    if std::env::var_os("AI_PROTOCOL_DIR").is_some()
+        || std::env::var_os("AI_PROTOCOL_PATH").is_some()
+    {
+        return;
+    }
+    // Local fallbacks used by ProtocolLoader when env is unset.
+    for candidate in ["ai-protocol", "../ai-protocol", "../../ai-protocol"] {
+        if std::path::Path::new(candidate).exists() {
+            std::env::set_var("AI_PROTOCOL_DIR", candidate);
+            return;
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_loading_all_providers() {
-    // Set AI_PROTOCOL_DIR to the local path for testing
-    let protocol_dir = "D:\\ai-protocol";
-    std::env::set_var("AI_PROTOCOL_DIR", protocol_dir);
+    protocol_dir_for_tests();
 
     let providers = vec!["openai", "anthropic", "gemini", "deepseek", "groq", "qwen"];
 
@@ -24,8 +38,7 @@ async fn test_loading_all_providers() {
 
 #[tokio::test]
 async fn test_loading_registered_models() {
-    let protocol_dir = "D:\\ai-protocol";
-    std::env::set_var("AI_PROTOCOL_DIR", protocol_dir);
+    protocol_dir_for_tests();
 
     let models = vec![
         "openai/gpt-4o",
