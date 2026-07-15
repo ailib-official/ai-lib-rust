@@ -96,10 +96,10 @@ impl ProtocolLoader {
 
     /// Load provider configuration.
     ///
-    /// Resolution (PT-ARCH-005 / ALR-ID-001):
+    /// Resolution (PT-ARCH-005 / 005d / ALR-ID-001):
     /// 1. Exact match on `provider_id` as file stem / primary `id`
-    /// 2. If missing: resolve via published `dist/provider-identity.json` alias map
-    ///    (and retry with canonical id)
+    /// 2. If missing: resolve via published `dist/provider-identity.json`
+    ///    (`families[]`, with legacy single-family fallback) and retry
     /// 3. Else fail closed (`NotFound`)
     pub async fn load_provider(
         &self,
@@ -311,11 +311,26 @@ impl ProtocolLoader {
 }
 
 fn canonical_from_identity_value(value: &serde_json::Value, key: &str) -> Option<String> {
-    let canonical = value.get("canonical_id")?.as_str()?;
+    // PT-ARCH-005d: multi-family map.
+    if let Some(families) = value.get("families").and_then(|f| f.as_array()) {
+        for family in families {
+            if let Some(canonical) = canonical_from_family(family, key) {
+                return Some(canonical);
+            }
+        }
+        return None;
+    }
+
+    // Legacy single-family document (pre-005d).
+    canonical_from_family(value, key)
+}
+
+fn canonical_from_family(family: &serde_json::Value, key: &str) -> Option<String> {
+    let canonical = family.get("canonical_id")?.as_str()?;
     if key == canonical {
         return Some(canonical.to_string());
     }
-    let aliases = value.get("aliases")?.as_array()?;
+    let aliases = family.get("aliases")?.as_array()?;
     if aliases.iter().any(|a| a.as_str() == Some(key)) {
         return Some(canonical.to_string());
     }
@@ -712,6 +727,30 @@ mod identity_alias_tests {
         assert_eq!(canonical_from_identity_value(&value, "openai"), None);
     }
 
+    #[test]
+    fn canonical_from_multi_family_map_resolves_kimi_and_glm() {
+        let value = serde_json::json!({
+            "families": [
+                { "canonical_id": "gemini", "aliases": ["google"] },
+                { "canonical_id": "moonshot", "aliases": ["kimi"] },
+                { "canonical_id": "zhipu", "aliases": ["glm"] }
+            ]
+        });
+        assert_eq!(
+            canonical_from_identity_value(&value, "kimi").as_deref(),
+            Some("moonshot")
+        );
+        assert_eq!(
+            canonical_from_identity_value(&value, "glm").as_deref(),
+            Some("zhipu")
+        );
+        assert_eq!(
+            canonical_from_identity_value(&value, "google").as_deref(),
+            Some("gemini")
+        );
+        assert_eq!(canonical_from_identity_value(&value, "openai"), None);
+    }
+
     #[tokio::test]
     async fn load_provider_resolves_google_alias_to_gemini_manifest() {
         let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
@@ -727,5 +766,39 @@ mod identity_alias_tests {
         assert_eq!(manifest.id, "gemini");
         let aliases = manifest.aliases.as_ref().expect("aliases present");
         assert!(aliases.iter().any(|a| a == "google"));
+    }
+
+    #[tokio::test]
+    async fn load_provider_resolves_kimi_and_glm_when_multi_family_map_present() {
+        let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
+        let identity = protocol_root.join("dist/provider-identity.json");
+        if !identity.exists() {
+            return;
+        }
+        let raw = std::fs::read_to_string(&identity).expect("read identity map");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("parse identity map");
+        // Skip when PROTO-PIN still has legacy single-family map (pre-005d).
+        if value.get("families").is_none() {
+            return;
+        }
+        if !protocol_root
+            .join("dist/v2/providers/moonshot.json")
+            .exists()
+        {
+            return;
+        }
+
+        let loader = ProtocolLoader::new().with_base_path(&protocol_root);
+        let moonshot = loader
+            .load_provider("kimi")
+            .await
+            .expect("kimi alias should resolve to moonshot");
+        assert_eq!(moonshot.id, "moonshot");
+
+        let zhipu = loader
+            .load_provider("glm")
+            .await
+            .expect("glm alias should resolve to zhipu");
+        assert_eq!(zhipu.id, "zhipu");
     }
 }
