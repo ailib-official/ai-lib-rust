@@ -72,7 +72,10 @@ fn consume_latest_v2_generative_manifests() {
             assert_eq!(manifest.detect_api_style(), ApiStyle::GeminiGenerate);
             // Tip protocol: canonical gemini + alias google. Legacy pin: id google, no aliases.
             if manifest.id == "gemini" {
-                let aliases = manifest.aliases.as_ref().expect("gemini aliases on tip protocol");
+                let aliases = manifest
+                    .aliases
+                    .as_ref()
+                    .expect("gemini aliases on tip protocol");
                 assert!(
                     aliases.iter().any(|a| a == "google"),
                     "gemini must declare google alias (PT-ARCH-005)"
