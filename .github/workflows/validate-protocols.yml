@@ -32,8 +32,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: tip @ PT-ARCH-005c (#34) — gemini canonical + identity map
-          ref: 749cb825c99f03e9dc737294b41fd5f5552533b4
+          # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
+          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
           path: ai-protocol
           # If ai-protocol is a submodule, use:
           # submodules: true
