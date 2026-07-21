@@ -103,12 +103,8 @@ impl AiClient {
     /// Create a new client instance for another model, reusing loader + shared runtime knobs
     /// (feedback, inflight) for consistent behavior.
     pub(crate) async fn with_model(&self, model: &str) -> Result<Self> {
-        // model is in form "provider/model-id"
-        let parts: Vec<&str> = model.split('/').collect();
-        let model_id = parts
-            .get(1)
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| model.to_string());
+        // Wire body model: same resolution as AiClientBuilder (ALR-NIM-001).
+        let model_id = self.loader.resolve_wire_model_id(model).await;
 
         let manifest = self.loader.load_model(model).await?;
         validation::validate_manifest(&manifest, self.strict_streaming)?;
