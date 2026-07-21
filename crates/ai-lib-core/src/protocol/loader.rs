@@ -72,11 +72,18 @@ impl ProtocolLoader {
         let model_name = parts[1..].join("/");
 
         // First, try to load model registry to get provider reference.
-        // If registry doesn't contain this model (common for providers like deepseek),
-        // fall back to loading provider manifest directly using the provider segment.
-        let manifest = match self.load_model_config(&model_name).await {
+        // Prefer the full logical id as registry key (e.g. nvidia/nemotron-mini-…),
+        // then the stripped remainder (e.g. meta/llama-…). If neither is registered
+        // (common for some providers), fall back to the provider segment.
+        let manifest = match self.load_model_config(model).await {
             Ok(model_config) => self.load_provider(&model_config.provider).await?,
-            Err(ProtocolError::NotFound { .. }) => self.load_provider(provider).await?,
+            Err(ProtocolError::NotFound { .. }) => {
+                match self.load_model_config(&model_name).await {
+                    Ok(model_config) => self.load_provider(&model_config.provider).await?,
+                    Err(ProtocolError::NotFound { .. }) => self.load_provider(provider).await?,
+                    Err(e) => return Err(e),
+                }
+            }
             Err(e) => return Err(e),
         };
 
@@ -92,6 +99,53 @@ impl ProtocolLoader {
         }
 
         Ok(manifest)
+    }
+
+    /// Resolve the OpenAI-compatible wire `model` field for a logical `provider/…` id.
+    ///
+    /// Lookup order (ALR-NIM-001):
+    /// 1. v1 model registry by full logical id, then by `parts[1..]` — prefer `model_id`, else key
+    /// 2. Fallback [`Self::wire_model_id_fallback`] (NIM nvidia-org keeps `nvidia/<name>`)
+    pub async fn resolve_wire_model_id(&self, logical: &str) -> String {
+        let trimmed = logical.trim();
+        let parts: Vec<&str> = trimmed.split('/').filter(|p| !p.is_empty()).collect();
+        let stripped = if parts.len() >= 2 {
+            parts[1..].join("/")
+        } else {
+            trimmed.to_string()
+        };
+
+        for key in [trimmed, stripped.as_str()] {
+            if key.is_empty() {
+                continue;
+            }
+            if let Ok(cfg) = self.load_model_config(key).await {
+                if let Some(id) = cfg.model_id.filter(|s| !s.trim().is_empty()) {
+                    return id;
+                }
+                return key.to_string();
+            }
+        }
+
+        Self::wire_model_id_fallback(trimmed)
+    }
+
+    /// Sync fallback when the v1 model registry has no entry (or protocol dir unset).
+    ///
+    /// For `nvidia/<single-segment>` NIM catalog ids, the wire body must keep the
+    /// `nvidia/` prefix (bare id → HTTP 404 page not found). Org-qualified ids
+    /// (`nvidia/meta/…`) still strip to `meta/…`.
+    #[must_use]
+    pub fn wire_model_id_fallback(logical: &str) -> String {
+        let trimmed = logical.trim();
+        let parts: Vec<&str> = trimmed.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.len() < 2 {
+            return trimmed.to_string();
+        }
+        if parts.len() == 2 && parts[0].eq_ignore_ascii_case("nvidia") {
+            return format!("{}/{}", parts[0], parts[1]);
+        }
+        parts[1..].join("/")
     }
 
     /// Load provider configuration.
@@ -527,6 +581,12 @@ impl ProtocolLoader {
 
         let mut search_locations: Vec<(PathBuf, bool)> = Vec::new(); // (path_base, is_json_preferred)
 
+        // 0. Explicit loader base_path (AiClientBuilder / tests)
+        if let Some(ref root) = self.base_path {
+            search_locations.push((root.join("dist").join("v1").join("models"), true));
+            search_locations.push((root.join("v1").join("models"), false));
+        }
+
         // 1. Env Var AI_PROTOCOL_DIR
         if let Ok(root) =
             std::env::var("AI_PROTOCOL_DIR").or_else(|_| std::env::var("AI_PROTOCOL_PATH"))
@@ -709,6 +769,48 @@ impl Default for ProtocolRegistry {
 #[cfg(test)]
 mod identity_alias_tests {
     use super::*;
+
+    #[test]
+    fn wire_model_id_fallback_keeps_nvidia_org_prefix() {
+        assert_eq!(
+            ProtocolLoader::wire_model_id_fallback("nvidia/nemotron-mini-4b-instruct"),
+            "nvidia/nemotron-mini-4b-instruct"
+        );
+    }
+
+    #[test]
+    fn wire_model_id_fallback_strips_org_qualified_nvidia() {
+        assert_eq!(
+            ProtocolLoader::wire_model_id_fallback("nvidia/meta/llama-3.1-8b-instruct"),
+            "meta/llama-3.1-8b-instruct"
+        );
+    }
+
+    #[test]
+    fn wire_model_id_fallback_strips_openai_style() {
+        assert_eq!(
+            ProtocolLoader::wire_model_id_fallback("openai/gpt-4o-mini"),
+            "gpt-4o-mini"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_wire_model_id_uses_registry_when_present() {
+        let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
+        let nvidia_models = protocol_root.join("dist/v1/models/nvidia.json");
+        if !nvidia_models.exists() {
+            return;
+        }
+        let loader = ProtocolLoader::new().with_base_path(&protocol_root);
+        let wire = loader
+            .resolve_wire_model_id("nvidia/nemotron-mini-4b-instruct")
+            .await;
+        assert_eq!(wire, "nvidia/nemotron-mini-4b-instruct");
+        let wire_meta = loader
+            .resolve_wire_model_id("nvidia/meta/llama-3.1-8b-instruct")
+            .await;
+        assert_eq!(wire_meta, "meta/llama-3.1-8b-instruct");
+    }
 
     #[test]
     fn canonical_from_identity_map_resolves_google_to_gemini() {

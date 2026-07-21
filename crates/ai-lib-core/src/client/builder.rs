@@ -125,12 +125,8 @@ impl AiClientBuilder {
         }
 
         // model is in form "provider/model-id" or "provider/org/model-name" (e.g. nvidia/minimaxai/minimax-m2)
-        let parts: Vec<&str> = model.split('/').collect();
-        let model_id = if parts.len() >= 2 {
-            parts[1..].join("/")
-        } else {
-            model.to_string()
-        };
+        // Wire body model: registry model_id when present; else NIM-aware fallback (ALR-NIM-001).
+        let model_id = loader.resolve_wire_model_id(model).await;
 
         let manifest = loader.load_model(model).await?;
         let strict_streaming = self.strict_streaming
