@@ -77,12 +77,13 @@ impl ProtocolLoader {
         // (common for some providers), fall back to the provider segment.
         let manifest = match self.load_model_config(model).await {
             Ok(model_config) => self.load_provider(&model_config.provider).await?,
-            Err(ProtocolError::NotFound { .. }) => match self.load_model_config(&model_name).await
-            {
-                Ok(model_config) => self.load_provider(&model_config.provider).await?,
-                Err(ProtocolError::NotFound { .. }) => self.load_provider(provider).await?,
-                Err(e) => return Err(e),
-            },
+            Err(ProtocolError::NotFound { .. }) => {
+                match self.load_model_config(&model_name).await {
+                    Ok(model_config) => self.load_provider(&model_config.provider).await?,
+                    Err(ProtocolError::NotFound { .. }) => self.load_provider(provider).await?,
+                    Err(e) => return Err(e),
+                }
+            }
             Err(e) => return Err(e),
         };
 
