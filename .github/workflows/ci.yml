@@ -18,7 +18,7 @@ jobs:
         with:
           repository: ailib-official/ai-protocol
           # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
-          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
+          ref: 0d5e85de6559003253a11334292148015f5a4aaa
           path: ai-protocol
 
       - name: Install Rust
@@ -58,7 +58,7 @@ jobs:
         with:
           repository: ailib-official/ai-protocol
           # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
-          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
+          ref: 0d5e85de6559003253a11334292148015f5a4aaa
           path: ai-protocol
 
       - name: Install Rust
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Keep in sync with checkout ref below (PROTO-PIN).
-      AI_PROTOCOL_REF: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
+      AI_PROTOCOL_REF: 0d5e85de6559003253a11334292148015f5a4aaa
     steps:
       - uses: actions/checkout@v4
       - name: Checkout ai-protocol
@@ -83,7 +83,7 @@ jobs:
         with:
           repository: ailib-official/ai-protocol
           # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
-          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
+          ref: 0d5e85de6559003253a11334292148015f5a4aaa
           path: ai-protocol
 
       - name: Checkout ai-protocol-mock
