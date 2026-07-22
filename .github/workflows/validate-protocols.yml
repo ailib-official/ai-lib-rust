@@ -33,7 +33,7 @@ jobs:
         with:
           repository: ailib-official/ai-protocol
           # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
-          ref: 627a6ebb765a3810c52822e84fdee95bb1ee24a4
+          ref: 0d5e85de6559003253a11334292148015f5a4aaa
           path: ai-protocol
           # If ai-protocol is a submodule, use:
           # submodules: true
