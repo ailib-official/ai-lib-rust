@@ -853,6 +853,38 @@ mod identity_alias_tests {
         assert_eq!(canonical_from_identity_value(&value, "openai"), None);
     }
 
+    #[test]
+    fn multi_alias_xlang_golden_matches_identity_map() {
+        let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
+        let golden_path = protocol_root.join("v2/alias-resolve.golden.json");
+        let map_path = protocol_root.join("v2/provider-identity.fixture.json");
+        if !golden_path.exists() || !map_path.exists() {
+            // Sibling ai-protocol checkout without MULTI-ALIAS-XLANG-001 yet — skip.
+            return;
+        }
+        let golden: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&golden_path).unwrap()).unwrap();
+        let map: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&map_path).unwrap()).unwrap();
+        let vectors = golden["vectors"].as_array().expect("vectors array");
+        assert!(!vectors.is_empty());
+        for v in vectors {
+            let input = v["input"].as_str().expect("input");
+            let expected = v.get("canonical").and_then(|c| {
+                if c.is_null() {
+                    None
+                } else {
+                    c.as_str().map(|s| s.to_string())
+                }
+            });
+            let got = canonical_from_identity_value(&map, input);
+            assert_eq!(
+                got, expected,
+                "golden input {input:?}: map={got:?} golden={expected:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn load_provider_resolves_google_alias_to_gemini_manifest() {
         let protocol_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
