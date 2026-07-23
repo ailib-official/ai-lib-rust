@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use super::config::*;
 use super::error::ProtocolError;
+use super::metadata_model::{model_entry_from_extra, CapabilityKnown, MetadataModelEntry};
 use super::request::UnifiedRequest;
 
 /// Protocol manifest structure (parsed from YAML)
@@ -122,6 +123,34 @@ impl ProtocolManifest {
             "mcp_client" => self.capabilities.mcp_client,
             _ => false,
         }
+    }
+
+    /// Experimental (ME-001): lookup `metadata.models.<model_id>` when present.
+    pub fn metadata_model_entry(&self, model_id: &str) -> Option<MetadataModelEntry> {
+        model_entry_from_extra(&self.extra, model_id)
+    }
+
+    /// Whether this model accepts a non-text input modality, preferring model facts over ads.
+    ///
+    /// - Known model fact wins (Yes/No)
+    /// - Unknown / missing model entry → provider-level ads (`vision` / `audio` / `multimodal`)
+    pub fn supports_input_modality_for_model(&self, model_id: &str, modality: &str) -> bool {
+        let known = self
+            .metadata_model_entry(model_id)
+            .map(|e| e.supports_input_modality(modality))
+            .unwrap_or(CapabilityKnown::Unknown);
+
+        let provider = match modality {
+            "image" => self.supports_capability("vision") || self.supports_capability("multimodal"),
+            "audio" => self.supports_capability("audio") || self.supports_capability("multimodal"),
+            "video" => self.supports_capability("multimodal"),
+            "pdf" => {
+                // Documents are not advertised via vision/audio ads today; only model facts.
+                false
+            }
+            _ => false,
+        };
+        known.or_provider(provider)
     }
 
     /// Get base URL from endpoint definition

@@ -55,6 +55,8 @@ pub mod error;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod loader;
 pub mod manifest;
+/// Experimental `metadata.models` capability facts (ME-001 / ALR-ME-001).
+pub mod metadata_model;
 pub mod request;
 pub mod schema;
 pub mod v2;
@@ -68,6 +70,10 @@ pub use error::ProtocolError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use loader::ProtocolLoader;
 pub use manifest::ProtocolManifest;
+pub use metadata_model::{
+    model_entry_from_extra, CapabilityKnown, MetadataModelEntry, ModelCapabilityFacts,
+    ModelModalities,
+};
 pub use request::UnifiedRequest;
 pub use schema::ProtocolSchema;
 pub use v2::{CapabilitiesV2, Capability, FeatureFlags, ManifestV2};
