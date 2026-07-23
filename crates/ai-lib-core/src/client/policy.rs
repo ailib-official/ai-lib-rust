@@ -70,17 +70,21 @@ impl PolicyEngine {
             ));
         }
 
-        // Check for Multimodal support (Vision/Audio)
-        let has_multimodal = request
+        // Check for Multimodal support (Vision/Audio) — prefer ME-001 model facts when present.
+        let needs_image = request
             .messages
             .iter()
-            .any(|m: &crate::types::message::Message| m.contains_image() || m.contains_audio());
-        if has_multimodal {
-            let supports_multimodal = manifest.supports_capability("multimodal")
-                || manifest.supports_capability("vision")
-                || manifest.supports_capability("audio");
-
-            if !supports_multimodal {
+            .any(|m: &crate::types::message::Message| m.contains_image());
+        let needs_audio = request
+            .messages
+            .iter()
+            .any(|m: &crate::types::message::Message| m.contains_audio());
+        if needs_image || needs_audio {
+            let image_ok =
+                !needs_image || manifest.supports_input_modality_for_model(&request.model, "image");
+            let audio_ok =
+                !needs_audio || manifest.supports_input_modality_for_model(&request.model, "audio");
+            if !image_ok || !audio_ok {
                 return Err(Error::validation_with_context(
                     "Model does not support multimodal content (images/audio)",
                     crate::ErrorContext::new()

@@ -250,6 +250,165 @@ parameter_mappings: {}
 }
 
 #[test]
+fn me001_model_modalities_override_provider_vision_ads() {
+    // Provider advertises vision, but model modalities.input is text-only → reject image.
+    let manifest: ProtocolManifest = serde_yaml::from_str(
+        r#"
+id: me001-ads-vision
+protocol_version: "2.0.0-alpha.1"
+status: stable
+category: ai_provider
+official_url: "https://example.com"
+support_contact: "s"
+endpoint:
+  base_url: "https://api.example.com"
+capabilities:
+  required: [text, streaming]
+  optional: [vision]
+parameter_mappings: {}
+metadata:
+  models:
+    text-only:
+      context_window: 8192
+      max_output_tokens: 1024
+      status: active
+      modalities:
+        input: [text]
+        output: [text]
+    vision-ok:
+      context_window: 8192
+      max_output_tokens: 1024
+      status: active
+      modalities:
+        input: [text, image]
+        output: [text]
+"#,
+    )
+    .expect("manifest");
+    assert!(manifest.supports_capability("vision"));
+    assert!(!manifest.supports_input_modality_for_model("text-only", "image"));
+    assert!(manifest.supports_input_modality_for_model("vision-ok", "image"));
+
+    let policy = PolicyEngine::new(&manifest);
+    let image_msg = Message::with_content(
+        ai_lib_rust::types::message::MessageRole::User,
+        ai_lib_rust::types::message::MessageContent::blocks(vec![
+            ai_lib_rust::types::message::ContentBlock::image_base64(
+                "aaaa".into(),
+                Some("image/png".into()),
+            ),
+        ]),
+    );
+    let reject = UnifiedRequest {
+        model: "text-only".into(),
+        messages: vec![image_msg.clone()],
+        ..Default::default()
+    };
+    assert!(policy.validate_capabilities(&reject).is_err());
+
+    let allow = UnifiedRequest {
+        model: "vision-ok".into(),
+        messages: vec![image_msg],
+        ..Default::default()
+    };
+    policy
+        .validate_capabilities(&allow)
+        .expect("vision-ok allows image");
+}
+
+#[test]
+fn me001_omit_model_capabilities_falls_back_to_provider_ads() {
+    // Capacity-only entry (omit fixture): unknown → provider ads decide.
+    let manifest: ProtocolManifest = serde_yaml::from_str(
+        r#"
+id: me001-omit
+protocol_version: "2.0.0-alpha.1"
+status: stable
+category: ai_provider
+official_url: "https://example.com"
+support_contact: "s"
+endpoint:
+  base_url: "https://api.example.com"
+capabilities:
+  required: [text, streaming]
+  optional: [vision]
+parameter_mappings: {}
+metadata:
+  models:
+    capacity-only:
+      context_window: 128000
+      max_output_tokens: 4096
+      status: active
+"#,
+    )
+    .expect("manifest");
+    assert!(manifest.supports_input_modality_for_model("capacity-only", "image"));
+    let policy = PolicyEngine::new(&manifest);
+    let req = UnifiedRequest {
+        model: "capacity-only".into(),
+        messages: vec![Message::with_content(
+            ai_lib_rust::types::message::MessageRole::User,
+            ai_lib_rust::types::message::MessageContent::blocks(vec![
+                ai_lib_rust::types::message::ContentBlock::image_base64(
+                    "bbbb".into(),
+                    Some("image/png".into()),
+                ),
+            ]),
+        )],
+        ..Default::default()
+    };
+    policy
+        .validate_capabilities(&req)
+        .expect("omit ≠ false; ads allow vision");
+}
+
+#[test]
+fn me001_model_modalities_can_enable_without_provider_vision_ad() {
+    let manifest: ProtocolManifest = serde_yaml::from_str(
+        r#"
+id: me001-model-wins
+protocol_version: "2.0.0-alpha.1"
+status: stable
+category: ai_provider
+official_url: "https://example.com"
+support_contact: "s"
+endpoint:
+  base_url: "https://api.example.com"
+capabilities:
+  required: [text, streaming]
+  optional: []
+parameter_mappings: {}
+metadata:
+  models:
+    with-image:
+      modalities:
+        input: [text, image]
+        output: [text]
+"#,
+    )
+    .expect("manifest");
+    assert!(!manifest.supports_capability("vision"));
+    assert!(manifest.supports_input_modality_for_model("with-image", "image"));
+    let policy = PolicyEngine::new(&manifest);
+    let req = UnifiedRequest {
+        model: "with-image".into(),
+        messages: vec![Message::with_content(
+            ai_lib_rust::types::message::MessageRole::User,
+            ai_lib_rust::types::message::MessageContent::blocks(vec![
+                ai_lib_rust::types::message::ContentBlock::image_base64(
+                    "cccc".into(),
+                    Some("image/png".into()),
+                ),
+            ]),
+        )],
+        ..Default::default()
+    };
+    policy
+        .validate_capabilities(&req)
+        .expect("model modalities win over empty ads");
+}
+
+#[test]
 fn gen002_openai_usage_reasoning_tokens_on_driver() {
     let driver = OpenAiDriver::new("openai", vec![]);
     let body = json!({

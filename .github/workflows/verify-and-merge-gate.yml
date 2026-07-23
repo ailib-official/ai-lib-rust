@@ -32,7 +32,7 @@ jobs:
         with:
           repository: ailib-official/ai-protocol
           # PROTO-PIN: tip @ PT-ARCH-005d (#35) — multi-family identity (gemini/moonshot/zhipu)
-          ref: 0d5e85de6559003253a11334292148015f5a4aaa
+          ref: 167cd3226f114c04fc88c78e9fd2abcbdd98e629
           path: ai-protocol
 
       - name: Install Rust
