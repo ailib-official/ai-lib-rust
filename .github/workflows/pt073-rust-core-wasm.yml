@@ -25,8 +25,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: tip @ PT-ARCH-005c (#34) — gemini canonical + identity map
-          ref: 167cd3226f114c04fc88c78e9fd2abcbdd98e629
+          # PROTO-PIN: tip @ PT-ME-007 (#54) / ME @ 8c80749
+          ref: 8c807490faf5dce1db5227cce78997d8c99a34e6
           path: ai-protocol
 
       - name: Install Rust (stable + wasm32-wasip1)
