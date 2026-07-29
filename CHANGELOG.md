@@ -4,9 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **Layered context assemble (CR-L1 / CR-L3)**: `ai_lib_contact::context` — `MessageChunk` / `ContextLayer`, `MessageAssembler::assemble_layered` with hard-budget fail-closed (`HardBudgetViolation`), plus `AssemblePool` async façade (concurrency + timeout).
+- **Provider identity aliases (ALR-ID-001 / ALR-ID-002)**: `ProtocolLoader::load_provider` resolves marketplace aliases via multi-family `dist/provider-identity.json` (e.g. `google`→`gemini`, `kimi`→`moonshot`); alias miss does not mask `ValidationError`.
+- **Wire model id (ALR-NIM-001)**: `resolve_wire_model_id` prefers v1 model registry `model_id`, with NIM-aware fallback for `nvidia/<name>`.
+- **Experimental model modalities (ALR-ME-001)**: prefer `metadata.models.<id>` modality facts over provider-level ads when present.
+
 ### Fixed
 
 - **Endpoint resolution**: `resolve_endpoint("chat")` falls back to `endpoints.chat_openai` when the canonical `chat` key is absent (DeepSeek v2 dual-API manifests). Prevents `Protocol not found: chat` for clients that always use operation `"chat"`.
+- **Pipeline**: accept `gemini_sse` decoder under current PROTO-PIN tip.
+
+### Docs
+
+- README / README_CN aligned to public API truth at **1.1.0** (and Unreleased behaviors on `main`).
 
 ## 1.1.0 - 2026-07-10
 
