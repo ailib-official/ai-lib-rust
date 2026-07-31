@@ -1,6 +1,6 @@
 # ai-lib-rust
 
-**Protocol runtime for [AI-Protocol](https://github.com/ailib-official/ai-protocol)** — high-performance Rust reference implementation (v**1.1.0**).
+**Protocol runtime for [AI-Protocol](https://github.com/ailib-official/ai-protocol)** — high-performance Rust reference implementation (v**1.2.0**).
 
 [中文文档](README_CN.md)
 
@@ -18,15 +18,15 @@ This is protocol-driven for chat, but not “zero provider code”: the repo als
 | Policy (P) | `ai-lib-contact` | `context` (layered assemble), `resilience`, `cache`, `routing`, `plugins`, `guardrails`, `batch`, `telemetry`, `tokens` |
 | Facade | `ai-lib-rust` | Re-exports + examples, integration tests, CLI bins |
 
-Published on [crates.io](https://crates.io/crates/ai-lib-rust): **`ai-lib-core`**, **`ai-lib-contact`**, **`ai-lib-rust`** (all **1.1.0**). `ai-lib-wasm` is built for `wasm32-wasip1` and is not published.
+Published on [crates.io](https://crates.io/crates/ai-lib-rust): **`ai-lib-core`**, **`ai-lib-contact`**, **`ai-lib-rust`** (all **1.2.0**). `ai-lib-wasm` is built for `wasm32-wasip1` and is not published.
 
-> **Note:** Git `main` may include protocol/identity and context-assemble work landed after the last crates.io cut. Match dependency versions to the tag you intend; see [CHANGELOG](CHANGELOG.md) `Unreleased`.
+> **Pin:** Prefer crates.io **1.2.0** (tag `v1.2.0`). CI pins `ai-protocol` **v1.1.0**. See [CHANGELOG](CHANGELOG.md).
 
 ## Quick start
 
 ```toml
 [dependencies]
-ai-lib-rust = "1.1.0"
+ai-lib-rust = "1.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -135,7 +135,7 @@ Feature-gated modules in `ai-lib-core`: `embeddings`, `mcp`, `computer_use`, `mu
 Enable features in `Cargo.toml`:
 
 ```toml
-ai-lib-rust = { version = "1.1.0", features = ["embeddings", "telemetry"] }
+ai-lib-rust = { version = "1.2.0", features = ["embeddings", "telemetry"] }
 ```
 
 ## Advanced: `ProviderDriver`

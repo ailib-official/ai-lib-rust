@@ -1,6 +1,6 @@
 # ai-lib-rust
 
-**[AI-Protocol](https://github.com/ailib-official/ai-protocol) 协议运行时** — 高性能 Rust 参考实现（v**1.1.0**）。
+**[AI-Protocol](https://github.com/ailib-official/ai-protocol) 协议运行时** — 高性能 Rust 参考实现（v**1.2.0**）。
 
 [English](README.md)
 
@@ -18,15 +18,15 @@
 | 策略 (P) | `ai-lib-contact` | `context`（分层拼装）、`resilience`、`cache`、`routing`、`plugins`、`guardrails`、`batch`、`telemetry`、`tokens` |
 | 门面 | `ai-lib-rust` | 再导出 + 示例、集成测试、CLI |
 
-已发布到 [crates.io](https://crates.io/crates/ai-lib-rust)：**`ai-lib-core`**、**`ai-lib-contact`**、**`ai-lib-rust`**（均为 **1.1.0**）。`ai-lib-wasm` 面向 `wasm32-wasip1` 构建，不发布。
+已发布到 [crates.io](https://crates.io/crates/ai-lib-rust)：**`ai-lib-core`**、**`ai-lib-contact`**、**`ai-lib-rust`**（均为 **1.2.0**）。`ai-lib-wasm` 面向 `wasm32-wasip1` 构建，不发布。
 
-> **说明：** Git `main` 可能包含上次 crates.io 发版之后的协议身份解析与 context 拼装改动。依赖请对齐目标 tag；见 [CHANGELOG](CHANGELOG.md) 的 `Unreleased`。
+> **钉版本：** 优先 crates.io **1.2.0**（标签 `v1.2.0`）。CI 钉住 `ai-protocol` **v1.1.0**。见 [CHANGELOG](CHANGELOG.md)。
 
 ## 快速开始
 
 ```toml
 [dependencies]
-ai-lib-rust = "1.1.0"
+ai-lib-rust = "1.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -135,7 +135,7 @@ let client = Arc::new(AiClient::new("openai/gpt-4o").await?);
 在 `Cargo.toml` 中启用：
 
 ```toml
-ai-lib-rust = { version = "1.1.0", features = ["embeddings", "telemetry"] }
+ai-lib-rust = { version = "1.2.0", features = ["embeddings", "telemetry"] }
 ```
 
 ## 进阶：`ProviderDriver`
