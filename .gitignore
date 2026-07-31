@@ -69,3 +69,7 @@ test_*.rs
 !tests/**/*.rs
 !examples/**/*.rs
 
+
+# Local CodeGraph index (do not commit)
+.codegraph/
+
