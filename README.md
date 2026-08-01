@@ -1,6 +1,8 @@
 # ai-lib-rust
 
-**Protocol runtime for [AI-Protocol](https://github.com/ailib-official/ai-protocol)** — high-performance Rust reference implementation (v**1.0.1**).
+**Protocol runtime for [AI-Protocol](https://github.com/ailib-official/ai-protocol)** — high-performance Rust reference implementation (v**1.2.0**).
+
+[中文文档](README_CN.md)
 
 `ai-lib-rust` is the umbrella crate most applications depend on. It re-exports **`ai-lib-core`** (execution) and **`ai-lib-contact`** (policy) so existing `ai_lib_rust::…` import paths stay stable.
 
@@ -13,16 +15,18 @@ This is protocol-driven for chat, but not “zero provider code”: the repo als
 | Layer | Crate | Responsibility |
 |-------|-------|----------------|
 | Execution (E) | `ai-lib-core` | `AiClient`, `pipeline`, `protocol`, `transport`, `types`, `structured`, optional capability modules |
-| Policy (P) | `ai-lib-contact` | `resilience`, `cache`, `routing`, `plugins`, `guardrails`, `batch`, `telemetry`, `tokens` |
+| Policy (P) | `ai-lib-contact` | `context` (layered assemble), `resilience`, `cache`, `routing`, `plugins`, `guardrails`, `batch`, `telemetry`, `tokens` |
 | Facade | `ai-lib-rust` | Re-exports + examples, integration tests, CLI bins |
 
-Published on [crates.io](https://crates.io/crates/ai-lib-rust): **`ai-lib-core`**, **`ai-lib-contact`**, **`ai-lib-rust`** (all **1.0.1**). `ai-lib-wasm` is built for `wasm32-wasip1` and is not published.
+Published on [crates.io](https://crates.io/crates/ai-lib-rust): **`ai-lib-core`**, **`ai-lib-contact`**, **`ai-lib-rust`** (all **1.2.0**). `ai-lib-wasm` is built for `wasm32-wasip1` and is not published.
+
+> **Pin:** Prefer crates.io **1.2.0** (tag `v1.2.0`). CI pins `ai-protocol` **v1.1.0**. See [CHANGELOG](CHANGELOG.md).
 
 ## Quick start
 
 ```toml
 [dependencies]
-ai-lib-rust = "1.0.1"
+ai-lib-rust = "1.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -98,13 +102,15 @@ let client = Arc::new(AiClient::new("openai/gpt-4o").await?);
 
 Always available (non-WASM):
 
-- **Client:** `AiClient`, `AiClientBuilder`, `ChatBatchRequest`, `CancelHandle`, `CallStats`, `EndpointExt`
+- **Client:** `AiClient`, `AiClientBuilder`, `ChatBatchRequest`, `CancelHandle`, `CallStats`, `ClientMetrics`, `EndpointExt`
 - **Types:** `Message`, `MessageRole`, `StreamingEvent`, `ToolCall`, `ExecutionMetadata`, `ExecutionResult`, `ExecutionUsage`
 - **Errors:** `Result`, `Error`, `ErrorContext`, `StandardErrorCode`
 - **Feedback:** `FeedbackEvent`, `FeedbackSink`
 - **Structured output:** `structured` module (`JsonModeConfig`, `OutputValidator`, …)
 - **Text-tool / TTC:** `StandardTextToolParser`, `ToolCallingPolicy`, `TextToolConfig`, …
 - **Policy (always re-exported):** `cache`, `context`, `plugins`, `resilience`
+
+`ai_lib_rust::context` (policy layer, always on) includes layered context assembly: `MessageChunk`, `ContextLayer`, `MessageAssembler::assemble_layered`, `AssemblePool` (async façade with concurrency / timeout), and `AssembleError::HardBudgetViolation` when System+Active exceed the token budget.
 
 Feature-gated re-exports from `ai-lib-contact`: `batch`, `guardrails`, `interceptors`, `routing` (`routing_mvp`), `telemetry`, `tokens`.
 
@@ -114,8 +120,9 @@ Feature-gated modules in `ai-lib-core`: `embeddings`, `mcp`, `computer_use`, `mu
 
 | Feature | What you get | Notes |
 |---------|--------------|-------|
-| `embeddings` | `EmbeddingClient` | Standalone OpenAI-style HTTP client |
-| `stt` / `tts` / `reranking` | `SttClient`, `TtsClient`, `RerankerClient` | Standalone service clients |
+| `keyring` (**default**) | OS keyring credential fallback | Disable with `default-features = false` for slim/CI builds |
+| `embeddings` | `EmbeddingClient` | Protocolized builders: `from_model` / `from_manifest` (no vendor URL default) |
+| `stt` / `tts` / `reranking` | `SttClient`, `TtsClient`, `RerankerClient` | Standalone service clients; rerank supports `from_model` / `from_manifest` |
 | `mcp` | `McpToolBridge` | Wire-format conversion / filtering; **no** built-in MCP transport client |
 | `computer_use` | `ComputerAction`, `SafetyPolicy` | Schema + validation; **no** action execution runtime |
 | `multimodal` | `MultimodalCapabilities` | Modality detection / format checks |
@@ -128,7 +135,7 @@ Feature-gated modules in `ai-lib-core`: `embeddings`, `mcp`, `computer_use`, `mu
 Enable features in `Cargo.toml`:
 
 ```toml
-ai-lib-rust = { version = "1.0.1", features = ["embeddings", "telemetry"] }
+ai-lib-rust = { version = "1.2.0", features = ["embeddings", "telemetry"] }
 ```
 
 ## Advanced: `ProviderDriver`
@@ -140,6 +147,7 @@ ai-lib-rust = { version = "1.0.1", features = ["embeddings", "telemetry"] }
 - **Built into `AiClient`:** `max_inflight` backpressure (`AiClientBuilder::max_inflight` or `AI_LIB_MAX_INFLIGHT`).
 - **Opt-in policy layer:** `ai_lib_rust::resilience` (retry, rate limiter, circuit breaker) — wire beside the client; not auto-enabled on `AiClient::new`.
 - **Batch concurrency:** `AI_LIB_BATCH_CONCURRENCY`.
+- **HTTP proxy:** reqwest system proxy (`HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`) on the direct route; set `AI_PROXY_URL` for an explicit failover candidate route.
 
 ## Protocol manifests
 
@@ -152,12 +160,24 @@ Resolution order for provider manifests:
 
 Per base path: `dist/v2/providers/<id>.json` → `v2/providers/<id>.yaml` → `dist/v1/providers/<id>.json` → `v1/providers/<id>.yaml`.
 
+**Identity / aliases:** `load_provider` resolves marketplace aliases via `dist/provider-identity.json` (multi-family map), e.g. `google` → `gemini`, `kimi` → `moonshot`. Validation errors are not masked by alias lookup.
+
+**Wire model id:** chat requests resolve the OpenAI-compatible `model` field via the v1 model registry (`resolve_wire_model_id`), with NIM-aware fallback for `nvidia/<name>` ids.
+
+**Endpoints:** operation `"chat"` falls back to `endpoints.chat_openai` when the canonical `chat` key is absent (DeepSeek dual-API manifests).
+
+**Model modalities (Experimental):** when `metadata.models.<id>` is present, those modality facts are preferred over provider-level ads (ALR-ME-001).
+
 Manifest cache: in-memory only. `with_hot_reload(true)` stores a flag but **does not watch files** — call `ProtocolLoader::clear_cache()` or rebuild the client after manifest changes.
 
 ## API keys
 
-1. OS keyring (optional, `keyring` feature, desktop)
-2. `<PROVIDER_ID>_API_KEY` env var (recommended for CI/containers)
+1. Builder override (if set)
+2. Manifest-declared env vars (`auth.token_env` / `auth.key_env`)
+3. Conventional `<PROVIDER_ID>_API_KEY` env var
+4. OS keyring (optional, `keyring` feature, desktop)
+
+Recommended for CI/containers: env vars; use `default-features = false` to drop keyring.
 
 ## Standard error codes (V2)
 
@@ -209,7 +229,7 @@ MOCK_HTTP_URL=http://localhost:4010 cargo test -- --ignored
 | `guardrails_usage` | `guardrails` |
 | `multi_provider` | `routing_mvp` |
 | `tavily_tool_calling` | tools |
-| … | see `crates/ai-lib-rust/Cargo.toml` `[[example]]` |
+| … | see `crates/ai-lib-rust/Cargo.toml` `[[example]]` and `examples/` |
 
 CLI bins: `cargo run --bin validate_protocols`, `cargo run --bin ai-protocol-cli`.
 
