@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **ALR-TTC-010**: `parse_dsml_dialect` accepts hybrid DSML `tool_call` wrappers with standard JSON bodies (ttc-010), in addition to invoke/parameter (ttc-007).
+
+### Changed
+
+- **ALR-TTC-011**: Document dialect matrix — `shell`/`bash` are manifest-driven; `dsml` uses U+FF5C delimiter hardcode as the wire form of `tag: dsml`; `function` dialect remains deferred (not implemented).
+
 ### Fixed
 
 - **Endpoint resolution**: `resolve_endpoint("chat")` falls back to `endpoints.chat_openai` when the canonical `chat` key is absent (DeepSeek v2 dual-API manifests). Prevents `Protocol not found: chat` for clients that always use operation `"chat"`.

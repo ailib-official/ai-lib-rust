@@ -371,6 +371,21 @@ fn dsml_parameter_re() -> &'static Regex {
     })
 }
 
+/// DSML-delimited standard `<tool_call>` wrapper (hybrid DSML+JSON; ttc-010).
+///
+/// Wire form uses the U+FF5C DSML delimiter family — the runtime form of
+/// `known_dialects[].tag: dsml` — with a standard JSON body (`name` + `arguments`
+/// / field aliases). Distinct from invoke/parameter (ttc-007).
+fn dsml_tool_call_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?s)<{DSML_TAG}tool_call(?:\s+[^>]*)?>(.*?)</{DSML_TAG}tool_call>"
+        ))
+        .expect("valid dsml tool_call regex")
+    })
+}
+
 /// Merge overlapping/adjacent byte spans for markup removal.
 fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     if spans.is_empty() {
@@ -389,11 +404,36 @@ fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     merged
 }
 
-/// Parse DeepSeek DSML text tool calls (`<｜｜DSML｜｜invoke>` / `<｜｜DSML｜｜parameter>`).
+/// Parse DeepSeek DSML text tool calls.
+///
+/// Supported shapes (format.yaml `known_dialects[].tag: dsml`):
+/// - invoke/parameter inside optional `<｜｜DSML｜｜tool_calls>` (ttc-007)
+/// - `<｜｜DSML｜｜tool_call>` wrapping standard JSON body (ttc-010)
+///
+/// Dialect matrix note (ALR-TTC-011):
+/// - `shell` / `bash` → `try_parse_configured_dialects` (manifest-driven)
+/// - `dsml` → this delimiter-based parser (U+FF5C hardcode is the wire form of tag `dsml`)
+/// - `function` → deferred; not implemented (do not advertise in manifests)
 fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     let mut tool_calls = Vec::new();
     let mut spans_to_remove = Vec::new();
     let param_re = dsml_parameter_re();
+
+    // Hybrid DSML tool_call + JSON (ttc-010) — reuse standard JSON body extraction.
+    for caps in dsml_tool_call_re().captures_iter(text) {
+        let full = caps.get(0).unwrap();
+        let body = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let attr_name = extract_name_from_open_tag(full.as_str());
+        if let Some((name, arguments)) = parse_json_body(body, attr_name, None) {
+            let idx = tool_calls.len();
+            tool_calls.push(ToolCall {
+                id: format!("text_tool_{idx}"),
+                name,
+                arguments,
+            });
+            spans_to_remove.push((full.start(), full.end()));
+        }
+    }
 
     for caps in dsml_invoke_re().captures_iter(text) {
         let full = caps.get(0).unwrap();
@@ -797,6 +837,25 @@ mod tests {
         assert_eq!(
             calls[0].arguments["command"],
             "ssh piubt \"systemctl status pifan\" 2>&1"
+        );
+    }
+
+    #[test]
+    fn lenient_deepseek_dsml_tool_call_json() {
+        let tag = DSML_TAG;
+        let text = format!(
+            "Checking remote service status.\n\n\
+             <{tag}tool_call>\n\
+             {{\"name\": \"shell\", \"arguments\": {{\"command\": \"ssh piubt systemctl is-active xray\"}}}}\n\
+             </{tag}tool_call>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(remaining, "Checking remote service status.");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "ssh piubt systemctl is-active xray"
         );
     }
 
