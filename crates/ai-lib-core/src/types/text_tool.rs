@@ -264,6 +264,55 @@ impl TextToolDeviation {
     }
 }
 
+/// Typed tool-call format failure for host recovery ladders (ALR-TTC-016).
+///
+/// Hosts should treat these as application-layer errors and apply a fixed
+/// strategy sequence — not grow dialect-specific parsers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolFormatError {
+    /// Recognized non-canonical markup (DSML / shell / bash dialects).
+    Leakage { kind: TextToolDeviation },
+    /// Markup present that looks like a tool attempt but no calls parsed
+    /// (including broken `<tool_call>` JSON or unknown suffixes like `$call`).
+    UnparsedMarkup,
+    /// Tool-call wrapper present but JSON body could not be decoded.
+    MalformedJson,
+    /// Native `tool_calls` present but arguments failed to parse.
+    NativeArgsInvalid,
+}
+
+impl ToolFormatError {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Leakage { .. } => "leakage",
+            Self::UnparsedMarkup => "unparsed_markup",
+            Self::MalformedJson => "malformed_json",
+            Self::NativeArgsInvalid => "native_args_invalid",
+        }
+    }
+}
+
+/// Host recovery strategies after [`inspect_tool_format`] fails (ALR-TTC-016).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolFormatRecoveryStrategy {
+    /// Remind canonical `<tool_call>` + `arguments` template.
+    CorrectivePrompt,
+    /// Demand native API tool_calls only; forbid all text markup.
+    NativeOnlyReask,
+    /// Strip markup and fail closed to the user (no further re-chat).
+    StripFailClosed,
+}
+
+impl ToolFormatRecoveryStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CorrectivePrompt => "CorrectivePrompt",
+            Self::NativeOnlyReask => "NativeOnlyReask",
+            Self::StripFailClosed => "StripFailClosed",
+        }
+    }
+}
+
 /// Detect the first recognizable text-tool markup in LLM output (for live validation logging).
 pub fn detect_text_tool_deviation(text: &str) -> Option<TextToolDeviation> {
     if text.contains(DSML_TAG) {
@@ -281,29 +330,84 @@ pub fn detect_text_tool_deviation(text: &str) -> Option<TextToolDeviation> {
     None
 }
 
+fn looks_like_tool_markup_attempt(text: &str) -> bool {
+    text.contains(DSML_TAG)
+        || text.contains("<tool_call")
+        || text.contains("<tool_calls")
+        || text.contains("<shell>")
+        || text.contains("<bash>")
+        || text.contains("<function>")
+        || text.contains("_call>")
+        || text.contains("$call")
+        || text.contains("<$call")
+}
+
+/// Inspect raw model text after parsing: `Ok(())` means no format recovery needed.
+///
+/// When `parsed_call_count == 0` and markup looks like a tool attempt, returns a
+/// typed [`ToolFormatError`] for the host strategy ladder.
+pub fn inspect_tool_format(
+    raw_text: &str,
+    parsed_call_count: usize,
+) -> Result<(), ToolFormatError> {
+    if parsed_call_count > 0 || raw_text.trim().is_empty() {
+        return Ok(());
+    }
+    if let Some(kind) = detect_text_tool_deviation(raw_text) {
+        return match kind {
+            TextToolDeviation::DsmlDialect
+            | TextToolDeviation::ShellDialect
+            | TextToolDeviation::BashDialect => Err(ToolFormatError::Leakage { kind }),
+            TextToolDeviation::StandardToolCall => {
+                // Opening tag present but no call extracted → usually bad JSON.
+                if raw_text.contains("<tool_call") && raw_text.contains('{') {
+                    Err(ToolFormatError::MalformedJson)
+                } else {
+                    Err(ToolFormatError::UnparsedMarkup)
+                }
+            }
+        };
+    }
+    if looks_like_tool_markup_attempt(raw_text) {
+        return Err(ToolFormatError::UnparsedMarkup);
+    }
+    Ok(())
+}
+
 /// True when the model appears to attempt a tool call but no calls were parsed.
 ///
-/// Used by host runtimes to trigger one corrective retry instead of leaking
-/// raw markup as the final assistant message (ALR-TTC-014 / steer-don't-chase).
+/// Prefer [`inspect_tool_format`] for typed recovery; this remains a thin bool wrapper.
 pub fn needs_tool_format_correction(raw_text: &str, parsed_call_count: usize) -> bool {
-    if parsed_call_count > 0 || raw_text.trim().is_empty() {
-        return false;
-    }
-    detect_text_tool_deviation(raw_text).is_some()
-        || raw_text.contains(DSML_TAG)
-        || raw_text.contains("<tool_call")
-        || raw_text.contains("<tool_calls")
+    inspect_tool_format(raw_text, parsed_call_count).is_err()
 }
 
 /// Short user-role correction appended before a single re-chat when format is wrong.
 pub fn tool_format_correction_message() -> &'static str {
-    "Your previous reply tried to call a tool but used an invalid format. \
-     Prefer native API tool_calls. If you must use text, emit EXACTLY:\n\
-     <tool_call>\n\
-     {\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n\
-     </tool_call>\n\
-     Rules: matching </tool_call> close tag; JSON must have \"name\" and \"arguments\" object; \
-     NEVER use DSML delimiters, <shell>, <bash>, or <function>. Call the tool again now."
+    tool_format_recovery_message(ToolFormatRecoveryStrategy::CorrectivePrompt)
+}
+
+/// User-role message for a recovery strategy step.
+pub fn tool_format_recovery_message(strategy: ToolFormatRecoveryStrategy) -> &'static str {
+    match strategy {
+        ToolFormatRecoveryStrategy::CorrectivePrompt => {
+            "Your previous reply tried to call a tool but used an invalid format. \
+             Prefer native API tool_calls. If you must use text, emit EXACTLY:\n\
+             <tool_call>\n\
+             {\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n\
+             </tool_call>\n\
+             Rules: matching </tool_call> close tag; JSON must have \"name\" and \"arguments\" object; \
+             NEVER use DSML delimiters, <shell>, <bash>, <function>, _call, or $call. Call the tool again now."
+        }
+        ToolFormatRecoveryStrategy::NativeOnlyReask => {
+            "STOP. Do not emit any text tool markup (no <tool_call>, no DSML, no <shell>, no _call, no $call). \
+             Call tools ONLY via the native API tool_calls / function-calling channel that was provided. \
+             Retry the tool call now using native tool_calls only."
+        }
+        ToolFormatRecoveryStrategy::StripFailClosed => {
+            // Hosts strip and return; no user re-prompt for this step.
+            ""
+        }
+    }
 }
 
 /// Merge native structured tool calls with lenient text parsing when native is empty.
@@ -1201,6 +1305,55 @@ mod tests {
         assert!(!needs_tool_format_correction("plain answer", 0));
         assert!(tool_format_correction_message().contains("<tool_call>"));
         assert!(tool_format_correction_message().contains("DSML"));
+    }
+
+    #[test]
+    fn inspect_tool_format_classifies_leakage_and_junk() {
+        let tag = DSML_TAG;
+        let dsml =
+            format!("<{tag}_call>\n{{\"name\":\"shell\",\"arguments\":{{}}}}\n</{tag}_call>");
+        // Lenient parse may succeed for _call; inspect with count 0 simulates failed/strict path.
+        assert!(matches!(
+            inspect_tool_format(&dsml, 0),
+            Err(ToolFormatError::Leakage {
+                kind: TextToolDeviation::DsmlDialect
+            })
+        ));
+
+        let broken = "<tool_call>\nNOT_JSON\n</tool_call>";
+        assert!(matches!(
+            inspect_tool_format(broken, 0),
+            Err(ToolFormatError::MalformedJson) | Err(ToolFormatError::UnparsedMarkup)
+        ));
+
+        let dollar = "<$call>\n{\"name\":\"shell\",\"arguments\":{}}\n</$call>";
+        assert_eq!(
+            inspect_tool_format(dollar, 0),
+            Err(ToolFormatError::UnparsedMarkup)
+        );
+
+        assert!(inspect_tool_format("plain final answer", 0).is_ok());
+        assert!(inspect_tool_format(&dsml, 1).is_ok());
+    }
+
+    #[test]
+    fn tool_format_recovery_messages_are_strategy_keyed() {
+        let corrective = tool_format_recovery_message(ToolFormatRecoveryStrategy::CorrectivePrompt);
+        assert!(corrective.contains("<tool_call>"));
+        assert!(corrective.contains("arguments"));
+
+        let native = tool_format_recovery_message(ToolFormatRecoveryStrategy::NativeOnlyReask);
+        assert!(native.contains("native"));
+        assert!(native.contains("DSML") || native.contains("tool_calls"));
+        assert!(!native.is_empty());
+
+        assert!(
+            tool_format_recovery_message(ToolFormatRecoveryStrategy::StripFailClosed).is_empty()
+        );
+        assert_eq!(
+            ToolFormatRecoveryStrategy::CorrectivePrompt.as_str(),
+            "CorrectivePrompt"
+        );
     }
 
     #[test]

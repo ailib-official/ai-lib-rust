@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - **ALR-TTC-010**: `parse_dsml_dialect` accepts hybrid DSML `tool_call` wrappers with standard JSON bodies (ttc-010), in addition to invoke/parameter (ttc-007).
 - **ALR-TTC-014**: `needs_tool_format_correction` / `tool_format_correction_message` for host runtimes to retry once when markup is present but no calls parsed.
+- **ALR-TTC-016**: `ToolFormatError` / `inspect_tool_format` / `ToolFormatRecoveryStrategy` / `tool_format_recovery_message` so hosts run a typed recovery ladder instead of chasing dialects.
 
 ### Changed
 
