@@ -63,9 +63,11 @@ pub use types::{
 };
 
 pub use types::text_tool::{
-    detect_text_tool_deviation, needs_tool_format_correction, parse_hybrid_tool_calls,
-    tool_format_correction_message, KnownDialect, NativeStrategy, PromptLevel,
-    StandardTextToolParser, TextToolConfig, TextToolDeviation, TextToolParser, ToolCallingPolicy,
+    detect_text_tool_deviation, inspect_tool_format, needs_tool_format_correction,
+    parse_hybrid_tool_calls, tool_format_correction_message, tool_format_recovery_message,
+    KnownDialect, NativeStrategy, PromptLevel, StandardTextToolParser, TextToolConfig,
+    TextToolDeviation, TextToolParser, ToolCallingPolicy, ToolFormatError,
+    ToolFormatRecoveryStrategy,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
