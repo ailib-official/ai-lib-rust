@@ -411,20 +411,20 @@ fn dsml_parameter_re() -> &'static Regex {
     })
 }
 
-/// DSML-delimited standard `<tool_call>` wrapper (hybrid DSML+JSON; ttc-010).
+/// DSML-delimited standard tool-call wrapper (hybrid DSML+JSON; ttc-010 / ttc-015).
 ///
 /// Wire form uses the U+FF5C DSML delimiter family — the runtime form of
 /// `known_dialects[].tag: dsml` — with a standard JSON body (`name` + `arguments`
 /// / field aliases). Distinct from invoke/parameter (ttc-007).
 ///
-/// DeepSeek often mismatches singular/plural close tags (`tool_call` opened,
-/// `tool_calls` closed, or the reverse). Accept both so hybrid JSON is not
-/// left as visible assistant text.
+/// DeepSeek V4 variants observed:
+/// - `<｜｜DSML｜｜tool_call>` / `tool_calls` (singular/plural mismatch)
+/// - `<｜｜DSML｜｜_call>` (underscore-prefixed shorthand; ALR-TTC-015)
 fn dsml_tool_call_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(&format!(
-            r"(?s)<{DSML_TAG}tool_calls?(?:\s+[^>]*)?>(.*?)</{DSML_TAG}tool_calls?>"
+            r"(?s)<{DSML_TAG}(?:tool_calls?|_call)(?:\s+[^>]*)?>(.*?)</{DSML_TAG}(?:tool_calls?|_call)>"
         ))
         .expect("valid dsml tool_call regex")
     })
@@ -487,6 +487,7 @@ fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 /// Supported shapes (format.yaml `known_dialects[].tag: dsml`):
 /// - invoke/parameter inside optional `<｜｜DSML｜｜tool_calls>` (ttc-007)
 /// - `<｜｜DSML｜｜tool_call>` wrapping standard JSON body (ttc-010)
+/// - `<｜｜DSML｜｜_call>` wrapping standard JSON body (ttc-015)
 /// - bare `<｜｜DSML｜｜>…JSON…</｜｜DSML｜｜>` wrappers (ttc-013)
 ///
 /// Dialect matrix note (ALR-TTC-011):
@@ -571,9 +572,9 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     }
 
     // Remove every DSML wrapper block (models may emit multiple per turn).
-    // Accept singular/plural mismatch the same way as hybrid tool_call JSON.
+    // Accept singular/plural / `_call` mismatch the same way as hybrid tool_call JSON.
     let wrapper_re = Regex::new(&format!(
-        r"(?s)<{DSML_TAG}tool_calls?>\s*(.*?)\s*</{DSML_TAG}tool_calls?>"
+        r"(?s)<{DSML_TAG}(?:tool_calls?|_call)>\s*(.*?)\s*</{DSML_TAG}(?:tool_calls?|_call)>"
     ))
     .expect("valid dsml tool_calls wrapper regex");
     for caps in wrapper_re.captures_iter(text) {
@@ -1094,6 +1095,23 @@ mod tests {
             "ssh -o BatchMode=yes piubt 'systemctl is-active xray'"
         );
         assert!(remaining.is_empty(), "remaining={remaining:?}");
+    }
+
+    #[test]
+    fn dsml_underscore_call_wrapper_parses() {
+        // DeepSeek V4 wire (ALR-TTC-015): <｜｜DSML｜｜_call>…JSON…</｜｜DSML｜｜_call>
+        let tag = DSML_TAG;
+        let text = format!(
+            "先读配置：\n<{tag}_call>\n\
+             {{\"name\": \"shell\", \"arguments\": {{\"command\": \"ssh piubt jq . /tmp/x\"}}}}\n\
+             </{tag}_call>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(calls.len(), 1, "DSML _call must parse");
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "ssh piubt jq . /tmp/x");
+        assert_eq!(remaining, "先读配置：");
+        assert!(!remaining.contains("DSML"));
     }
 
     #[test]

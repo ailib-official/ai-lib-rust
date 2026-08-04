@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 
 - **ALR-TTC-012**: Hybrid DSML JSON wrappers accept mismatched singular/plural close tags (`tool_call` opened / `tool_calls` closed, and the reverse) so DeepSeek V4 text tool calls are not left as visible assistant markup.
 - **ALR-TTC-013**: Accept mixed standard `<tool_call>` open with bare DSML close (`</｜｜DSML｜｜>`), flat JSON args (`{"name","command"}`), and bare `<｜｜DSML｜｜>…JSON…</｜｜DSML｜｜>` wrappers.
+- **ALR-TTC-015**: Accept DSML `_call` wrappers (`<｜｜DSML｜｜_call>…JSON…</｜｜DSML｜｜_call>`) as the same delimiter-family hybrid JSON shape.
 
 ## 1.2.0 - 2026-07-31
 
