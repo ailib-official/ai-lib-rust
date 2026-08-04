@@ -328,6 +328,21 @@ fn tool_call_block_re() -> &'static Regex {
     })
 }
 
+/// Lenient `<tool_call>` block: accept standard close **or** DSML close tags.
+///
+/// DeepSeek V4 has been observed emitting:
+/// `<tool_call>\n{"name":"shell","command":"..."}\n</｜｜DSML｜｜>`
+/// (standard open, bare DSML close, flat JSON args).
+fn tool_call_block_lenient_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?s)<tool_call(?:\s+[^>]*)?>(.*?)</(?:tool_call|{DSML_TAG}(?:tool_calls?)?|{DSML_TAG})>"
+        ))
+        .expect("valid lenient tool_call regex")
+    })
+}
+
 fn shell_dialect_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -390,6 +405,40 @@ fn dsml_tool_call_re() -> &'static Regex {
     })
 }
 
+/// Bare DSML wrapper around a JSON tool body (no `tool_call` / `invoke` suffix).
+///
+/// Wire form seen in the wild:
+/// `<｜｜DSML｜｜>\n{"name":"shell","arguments":{...}}\n</｜｜DSML｜｜>`
+/// (sometimes nested twice).
+fn dsml_bare_json_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(r"(?s)<{DSML_TAG}>\s*(.*?)\s*</{DSML_TAG}>"))
+            .expect("valid bare dsml json regex")
+    })
+}
+
+/// Extract the first top-level JSON object/array substring, if any.
+fn first_json_slice(input: &str) -> Option<&str> {
+    let trimmed = input.trim_start();
+    let trim_offset = input.len().saturating_sub(trimmed.len());
+    for (byte_idx, ch) in trimmed.char_indices() {
+        if ch != '{' && ch != '[' {
+            continue;
+        }
+        let slice = &trimmed[byte_idx..];
+        let mut stream = serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
+        if let Some(Ok(_)) = stream.next() {
+            let consumed = stream.byte_offset();
+            if consumed > 0 {
+                let start = trim_offset + byte_idx;
+                return Some(&input[start..start + consumed]);
+            }
+        }
+    }
+    None
+}
+
 /// Merge overlapping/adjacent byte spans for markup removal.
 fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     if spans.is_empty() {
@@ -413,6 +462,7 @@ fn merge_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 /// Supported shapes (format.yaml `known_dialects[].tag: dsml`):
 /// - invoke/parameter inside optional `<｜｜DSML｜｜tool_calls>` (ttc-007)
 /// - `<｜｜DSML｜｜tool_call>` wrapping standard JSON body (ttc-010)
+/// - bare `<｜｜DSML｜｜>…JSON…</｜｜DSML｜｜>` wrappers (ttc-013)
 ///
 /// Dialect matrix note (ALR-TTC-011):
 /// - `shell` / `bash` → `try_parse_configured_dialects` (manifest-driven)
@@ -429,6 +479,29 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
         let body = caps.get(1).map(|m| m.as_str()).unwrap_or("");
         let attr_name = extract_name_from_open_tag(full.as_str());
         if let Some((name, arguments)) = parse_json_body(body, attr_name, None) {
+            let idx = tool_calls.len();
+            tool_calls.push(ToolCall {
+                id: format!("text_tool_{idx}"),
+                name,
+                arguments,
+            });
+            spans_to_remove.push((full.start(), full.end()));
+        }
+    }
+
+    // Bare DSML wrappers around JSON (ttc-013). Prefer innermost JSON when nested.
+    for caps in dsml_bare_json_re().captures_iter(text) {
+        let full = caps.get(0).unwrap();
+        // Skip spans already claimed by tool_call / invoke matches.
+        if spans_to_remove
+            .iter()
+            .any(|(s, e)| full.start() >= *s && full.end() <= *e)
+        {
+            continue;
+        }
+        let body = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let json = first_json_slice(body).unwrap_or(body);
+        if let Some((name, arguments)) = parse_json_body(json, None, None) {
             let idx = tool_calls.len();
             tool_calls.push(ToolCall {
                 id: format!("text_tool_{idx}"),
@@ -479,6 +552,13 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     ))
     .expect("valid dsml tool_calls wrapper regex");
     for caps in wrapper_re.captures_iter(text) {
+        if let Some(full) = caps.get(0) {
+            spans_to_remove.push((full.start(), full.end()));
+        }
+    }
+
+    // Also strip leftover bare DSML wrappers after JSON extraction.
+    for caps in dsml_bare_json_re().captures_iter(text) {
         if let Some(full) = caps.get(0) {
             spans_to_remove.push((full.start(), full.end()));
         }
@@ -647,8 +727,12 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
         remaining = unwrap_tool_calls_wrapper(&remaining);
     }
 
-    // Collect standard <tool_call> blocks
-    let block_re = tool_call_block_re();
+    // Collect standard <tool_call> blocks (lenient accepts DSML close tags).
+    let block_re = if config.lenient_parsing {
+        tool_call_block_lenient_re()
+    } else {
+        tool_call_block_re()
+    };
     let mut spans_to_remove: Vec<(usize, usize)> = Vec::new();
 
     for caps in block_re.captures_iter(&remaining) {
@@ -706,6 +790,14 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
         .join("\n")
         .trim()
         .to_string();
+
+    // Drop orphan bare DSML open/close tags left by nested wrapper matching.
+    let remaining_text = if config.lenient_parsing && remaining_text.contains(DSML_TAG) {
+        let orphan = Regex::new(&format!(r"</?{DSML_TAG}>")).expect("valid orphan dsml regex");
+        orphan.replace_all(&remaining_text, "").trim().to_string()
+    } else {
+        remaining_text
+    };
 
     (remaining_text, tool_calls)
 }
@@ -933,6 +1025,44 @@ mod tests {
         assert_eq!(remaining, "需要了解 obvs 输出列的含义。");
         assert!(!remaining.contains("DSML"));
         assert!(!remaining.contains("tool_call"));
+    }
+
+    #[test]
+    fn mixed_standard_open_bare_dsml_close_flat_args() {
+        // Journaled DeepSeek V4 wire form (ALR-TTC-013):
+        // <tool_call>\n{"name":"shell","command":"..."}\n</｜｜DSML｜｜>
+        let tag = DSML_TAG;
+        let text = format!(
+            "<tool_call>\n\
+             {{\"name\": \"shell\", \"command\": \"ssh -o BatchMode=yes piubt 'systemctl is-active xray'\"}}\n\
+             </{tag}>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(calls.len(), 1, "mixed open/close must parse");
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "ssh -o BatchMode=yes piubt 'systemctl is-active xray'"
+        );
+        assert!(remaining.is_empty(), "remaining={remaining:?}");
+    }
+
+    #[test]
+    fn bare_dsml_json_wrapper_parses() {
+        let tag = DSML_TAG;
+        let text = format!(
+            "<{tag}>\n<{tag}>\n\
+             {{\"name\": \"shell\", \"arguments\": {{\"command\": \"cat /home/pishare/proxypi-ops.md\"}}}}\n\
+             </{tag}>\n</{tag}>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(
+            calls[0].arguments["command"],
+            "cat /home/pishare/proxypi-ops.md"
+        );
+        assert!(remaining.is_empty(), "remaining={remaining:?}");
     }
 
     #[test]
