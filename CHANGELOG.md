@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 
 - **ALR-TTC-011**: Document dialect matrix — `shell`/`bash` are manifest-driven; `dsml` uses U+FF5C delimiter hardcode as the wire form of `tag: dsml`; `function` dialect remains deferred (not implemented).
 
+### Fixed
+
+- **ALR-TTC-012**: Hybrid DSML JSON wrappers accept mismatched singular/plural close tags (`tool_call` opened / `tool_calls` closed, and the reverse) so DeepSeek V4 text tool calls are not left as visible assistant markup.
+
 ## 1.2.0 - 2026-07-31
 
 ### Changed

@@ -376,11 +376,15 @@ fn dsml_parameter_re() -> &'static Regex {
 /// Wire form uses the U+FF5C DSML delimiter family — the runtime form of
 /// `known_dialects[].tag: dsml` — with a standard JSON body (`name` + `arguments`
 /// / field aliases). Distinct from invoke/parameter (ttc-007).
+///
+/// DeepSeek often mismatches singular/plural close tags (`tool_call` opened,
+/// `tool_calls` closed, or the reverse). Accept both so hybrid JSON is not
+/// left as visible assistant text.
 fn dsml_tool_call_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(&format!(
-            r"(?s)<{DSML_TAG}tool_call(?:\s+[^>]*)?>(.*?)</{DSML_TAG}tool_call>"
+            r"(?s)<{DSML_TAG}tool_calls?(?:\s+[^>]*)?>(.*?)</{DSML_TAG}tool_calls?>"
         ))
         .expect("valid dsml tool_call regex")
     })
@@ -469,8 +473,9 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     }
 
     // Remove every DSML wrapper block (models may emit multiple per turn).
+    // Accept singular/plural mismatch the same way as hybrid tool_call JSON.
     let wrapper_re = Regex::new(&format!(
-        r"(?s)<{DSML_TAG}tool_calls>\s*(.*?)\s*</{DSML_TAG}tool_calls>"
+        r"(?s)<{DSML_TAG}tool_calls?>\s*(.*?)\s*</{DSML_TAG}tool_calls?>"
     ))
     .expect("valid dsml tool_calls wrapper regex");
     for caps in wrapper_re.captures_iter(text) {
@@ -910,6 +915,24 @@ mod tests {
         let (_, calls) = parse_hybrid_tool_calls(&parser, &text, &[]);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].arguments["command"], "pwd");
+    }
+
+    #[test]
+    fn hybrid_dsml_json_accepts_mismatched_tool_call_close_tag() {
+        // DeepSeek V4 often opens tool_call and closes tool_calls (or reverse).
+        let tag = DSML_TAG;
+        let text = format!(
+            "需要了解 obvs 输出列的含义。\n<{tag}tool_call>\n\
+             {{\"name\": \"shell\", \"arguments\": {{\"command\": \"ssh piubt ls\"}}}}\n\
+             </{tag}tool_calls>"
+        );
+        let (remaining, calls) = parser_lenient().parse(&text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "ssh piubt ls");
+        assert_eq!(remaining, "需要了解 obvs 输出列的含义。");
+        assert!(!remaining.contains("DSML"));
+        assert!(!remaining.contains("tool_call"));
     }
 
     #[test]
