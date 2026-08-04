@@ -7,10 +7,12 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **ALR-TTC-010**: `parse_dsml_dialect` accepts hybrid DSML `tool_call` wrappers with standard JSON bodies (ttc-010), in addition to invoke/parameter (ttc-007).
+- **ALR-TTC-014**: `needs_tool_format_correction` / `tool_format_correction_message` for host runtimes to retry once when markup is present but no calls parsed.
 
 ### Changed
 
 - **ALR-TTC-011**: Document dialect matrix — `shell`/`bash` are manifest-driven; `dsml` uses U+FF5C delimiter hardcode as the wire form of `tag: dsml`; `function` dialect remains deferred (not implemented).
+- **ALR-TTC-014**: L2/L3 text-tool prompts steer native-first and explicitly forbid DSML delimiters (`｜｜DSML｜｜` / U+FF5C), mismatched closes, and flat args without `arguments`.
 
 ### Fixed
 

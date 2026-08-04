@@ -63,7 +63,8 @@ pub use types::{
 };
 
 pub use types::text_tool::{
-    detect_text_tool_deviation, parse_hybrid_tool_calls, KnownDialect, NativeStrategy, PromptLevel,
+    detect_text_tool_deviation, needs_tool_format_correction, parse_hybrid_tool_calls,
+    tool_format_correction_message, KnownDialect, NativeStrategy, PromptLevel,
     StandardTextToolParser, TextToolConfig, TextToolDeviation, TextToolParser, ToolCallingPolicy,
 };
 
