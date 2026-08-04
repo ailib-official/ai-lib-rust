@@ -275,10 +275,35 @@ pub fn detect_text_tool_deviation(text: &str) -> Option<TextToolDeviation> {
     if bash_dialect_re().is_match(text) {
         return Some(TextToolDeviation::BashDialect);
     }
-    if tool_call_block_re().is_match(text) {
+    if tool_call_block_re().is_match(text) || text.contains("<tool_call") {
         return Some(TextToolDeviation::StandardToolCall);
     }
     None
+}
+
+/// True when the model appears to attempt a tool call but no calls were parsed.
+///
+/// Used by host runtimes to trigger one corrective retry instead of leaking
+/// raw markup as the final assistant message (ALR-TTC-014 / steer-don't-chase).
+pub fn needs_tool_format_correction(raw_text: &str, parsed_call_count: usize) -> bool {
+    if parsed_call_count > 0 || raw_text.trim().is_empty() {
+        return false;
+    }
+    detect_text_tool_deviation(raw_text).is_some()
+        || raw_text.contains(DSML_TAG)
+        || raw_text.contains("<tool_call")
+        || raw_text.contains("<tool_calls")
+}
+
+/// Short user-role correction appended before a single re-chat when format is wrong.
+pub fn tool_format_correction_message() -> &'static str {
+    "Your previous reply tried to call a tool but used an invalid format. \
+     Prefer native API tool_calls. If you must use text, emit EXACTLY:\n\
+     <tool_call>\n\
+     {\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n\
+     </tool_call>\n\
+     Rules: matching </tool_call> close tag; JSON must have \"name\" and \"arguments\" object; \
+     NEVER use DSML delimiters, <shell>, <bash>, or <function>. Call the tool again now."
 }
 
 /// Merge native structured tool calls with lenient text parsing when native is empty.
@@ -816,39 +841,61 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
         .join("\n");
 
     let is_zh = config.locale.starts_with("zh");
+    // U+FF5C fullwidth vertical line — DeepSeek DSML delimiter family.
+    let dsml_ban = "\u{FF5C}\u{FF5C}DSML\u{FF5C}\u{FF5C}";
 
     match (config.prompt_level, is_zh) {
         (PromptLevel::L1, true) => format!(
             "## 工具调用协议\n\n\
+             优先使用 API 原生 tool_calls。若必须用文本，仅允许：\n\
              <tool_call>\n{{\"name\": \"工具名\", \"arguments\": {{\"参数\": \"值\"}}}}\n</tool_call>\n\n\
              可用工具：\n{tool_list}"
         ),
         (PromptLevel::L1, false) => format!(
             "## Tool Use Protocol\n\n\
+             Prefer native API tool_calls when available. If you must emit text, use ONLY:\n\
              <tool_call>\n{{\"name\": \"tool_name\", \"arguments\": {{\"param\": \"value\"}}}}\n</tool_call>\n\n\
              Available tools:\n{tool_list}"
         ),
         (PromptLevel::L2, true) => format!(
             "## 工具调用协议\n\n\
+             优先使用 API 原生 tool_calls（不要把工具调用写进正文）。\n\
+             若必须用文本，格式必须完全一致：\n\
              <tool_call>\n{{\"name\": \"工具名\", \"arguments\": {{\"参数\": \"值\"}}}}\n</tool_call>\n\n\
              关键规则：\n\
-             - 只能使用 <tool_call>。<shell>、<bash>、<function> 将被忽略。\n\
-             - JSON 必须包含 \"name\" 和 \"arguments\"。\n\n\
+             - 开闭标签必须都是 </tool_call>（禁止混用其它闭标签）。\n\
+             - JSON 必须包含 \"name\"（字符串）和 \"arguments\"（对象）；禁止扁平 {{\"name\",\"command\"}}。\n\
+             - 禁止 <shell>、<bash>、<function>、以及任何含 {dsml_ban} 的 DSML 标记。\n\
+             - 禁止外包 <tool_calls> 或其它包装标签。\n\n\
              可用工具：\n{tool_list}"
         ),
         (PromptLevel::L2, false) => format!(
             "## Tool Use Protocol\n\n\
+             Prefer native API tool_calls (do not put tool invocations in plain text).\n\
+             If you must emit text tool calls, use this exact template:\n\
              <tool_call>\n{{\"name\": \"tool_name\", \"arguments\": {{\"param\": \"value\"}}}}\n</tool_call>\n\n\
              CRITICAL RULES:\n\
-             - Use <tool_call> ONLY. <shell>, <bash>, <function> WILL BE IGNORED.\n\
-             - JSON must contain \"name\" (string) and \"arguments\" (object).\n\
+             - Open and close tags must both be tool_call (no mismatched closes).\n\
+             - JSON must contain \"name\" (string) and \"arguments\" (object). \
+               Do NOT flatten args as {{\"name\",\"command\"}}.\n\
+             - NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup.\n\
              - Do NOT wrap in <tool_calls> or any other tag.\n\n\
              Available tools:\n{tool_list}"
         ),
-        (PromptLevel::L3, _) => format!(
-            "## Tool Use Protocol — Example\n\n\
+        (PromptLevel::L3, true) => format!(
+            "## 工具调用协议 — 示例\n\n\
+             优先使用 API 原生 tool_calls。文本回退示例（必须逐字遵守）：\n\
              <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
-             CRITICAL: <shell>, <bash>, <function> formats WILL BE IGNORED.\n\n\
+             关键：禁止 <shell>/<bash>/<function>，禁止任何 {dsml_ban} DSML 标记；\
+             JSON 必须含 \"name\" 与 \"arguments\" 对象。\n\n\
+             可用工具：\n{tool_list}"
+        ),
+        (PromptLevel::L3, false) => format!(
+            "## Tool Use Protocol — Example\n\n\
+             Prefer native API tool_calls. Text fallback example (follow exactly):\n\
+             <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
+             CRITICAL: NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup. \
+             JSON must include \"name\" and an \"arguments\" object.\n\n\
              Available tools:\n{tool_list}"
         ),
     }
@@ -1092,8 +1139,48 @@ mod tests {
         });
         let prompt = parser.prompt_instructions(&tools);
         assert!(prompt.contains("<tool_call>"));
-        assert!(prompt.contains("WILL BE IGNORED"));
+        assert!(prompt.contains("CRITICAL RULES") || prompt.contains("NEVER use"));
         assert!(prompt.contains("shell"));
+        assert!(
+            prompt.contains("DSML") || prompt.contains('\u{FF5C}'),
+            "L2 must forbid DSML delimiters"
+        );
+        assert!(
+            prompt.contains("Prefer native API"),
+            "L2 must steer toward native tool_calls"
+        );
+    }
+
+    #[test]
+    fn prompt_l3_forbids_dsml_and_steers_native() {
+        let tools = vec![ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "shell".to_string(),
+                description: Some("Execute shell commands".to_string()),
+                parameters: None,
+            },
+        }];
+        let parser = StandardTextToolParser::new(TextToolConfig {
+            prompt_level: PromptLevel::L3,
+            locale: "en".to_string(),
+            ..Default::default()
+        });
+        let prompt = parser.prompt_instructions(&tools);
+        assert!(prompt.contains("DSML") || prompt.contains('\u{FF5C}'));
+        assert!(prompt.contains("Prefer native API"));
+        assert!(prompt.contains("example") || prompt.contains("Example"));
+    }
+
+    #[test]
+    fn needs_tool_format_correction_when_markup_unparsed() {
+        let tag = DSML_TAG;
+        let junk = format!("<tool_call>\n{{\"name\":\"shell\",\"command\":\"ls\"}}\n</{tag}>");
+        assert!(needs_tool_format_correction(&junk, 0));
+        assert!(!needs_tool_format_correction(&junk, 1));
+        assert!(!needs_tool_format_correction("plain answer", 0));
+        assert!(tool_format_correction_message().contains("<tool_call>"));
+        assert!(tool_format_correction_message().contains("DSML"));
     }
 
     #[test]
