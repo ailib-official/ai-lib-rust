@@ -865,7 +865,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
              关键规则：\n\
              - 开闭标签必须都是 </tool_call>（禁止混用其它闭标签）。\n\
              - JSON 必须包含 \"name\"（字符串）和 \"arguments\"（对象）；禁止扁平 {{\"name\",\"command\"}}。\n\
-             - 禁止 <shell>、<bash>、<function>、以及任何含 {dsml_ban} 的 DSML 标记。\n\
+             - 禁止 <shell>、<bash>、<function>、以及任何含 {dsml_ban} 的 DSML 标记（WILL BE IGNORED）。\n\
              - 禁止外包 <tool_calls> 或其它包装标签。\n\n\
              可用工具：\n{tool_list}"
         ),
@@ -878,7 +878,8 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
              - Open and close tags must both be tool_call (no mismatched closes).\n\
              - JSON must contain \"name\" (string) and \"arguments\" (object). \
                Do NOT flatten args as {{\"name\",\"command\"}}.\n\
-             - NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup.\n\
+             - NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup. \
+               These formats WILL BE IGNORED.\n\
              - Do NOT wrap in <tool_calls> or any other tag.\n\n\
              Available tools:\n{tool_list}"
         ),
@@ -886,7 +887,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
             "## 工具调用协议 — 示例\n\n\
              优先使用 API 原生 tool_calls。文本回退示例（必须逐字遵守）：\n\
              <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
-             关键：禁止 <shell>/<bash>/<function>，禁止任何 {dsml_ban} DSML 标记；\
+             关键：禁止 <shell>/<bash>/<function>，禁止任何 {dsml_ban} DSML 标记（WILL BE IGNORED）；\
              JSON 必须含 \"name\" 与 \"arguments\" 对象。\n\n\
              可用工具：\n{tool_list}"
         ),
@@ -894,7 +895,8 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
             "## Tool Use Protocol — Example\n\n\
              Prefer native API tool_calls. Text fallback example (follow exactly):\n\
              <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
-             CRITICAL: NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup. \
+             CRITICAL: NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup — \
+             these formats WILL BE IGNORED. \
              JSON must include \"name\" and an \"arguments\" object.\n\n\
              Available tools:\n{tool_list}"
         ),
