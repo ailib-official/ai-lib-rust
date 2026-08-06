@@ -429,9 +429,11 @@ impl HttpTransport {
         let route = &self.routes[idx];
         let mut req = route.client.post(&url);
         req = self.apply_auth(req);
-        let response = req.multipart(form).send().await.map_err(|e| {
-            crate::Error::Transport(crate::transport::TransportError::Http(e))
-        })?;
+        let response = req
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| crate::Error::Transport(crate::transport::TransportError::Http(e)))?;
         self.preferred_route.store(idx, Ordering::Relaxed);
         tracing::debug!(
             route = route.label.as_str(),
@@ -460,9 +462,7 @@ impl HttpTransport {
             "official_url": "",
             "support_contact": ""
         }))
-        .map_err(|e| {
-            crate::Error::configuration(format!("explicit bearer manifest: {e}"))
-        })?;
+        .map_err(|e| crate::Error::configuration(format!("explicit bearer manifest: {e}")))?;
         Self::new_with_base_url_and_credential(&manifest, model, Some(base_url), Some(api_key))
     }
 }
