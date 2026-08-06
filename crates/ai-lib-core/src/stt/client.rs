@@ -1,15 +1,16 @@
 //! STT (Speech-to-Text) client.
+//! HTTP via [`crate::transport::HttpTransport`] ([GOV-007]).
 
 use super::types::{SttOptions, Transcription};
+use crate::protocol::ProtocolManifest;
+use crate::transport::{build_ancillary_transport, normalize_endpoint_path, HttpTransport};
 use crate::{Error, ErrorContext, Result};
 
 /// Client for speech-to-text transcription.
 pub struct SttClient {
-    http_client: reqwest::Client,
+    transport: HttpTransport,
     model: String,
-    base_url: String,
     endpoint_path: String,
-    api_key: String,
 }
 
 impl SttClient {
@@ -18,11 +19,6 @@ impl SttClient {
     }
 
     pub async fn transcribe(&self, audio: &[u8], options: &SttOptions) -> Result<Transcription> {
-        let endpoint = format!(
-            "{}{}",
-            self.base_url.trim_end_matches('/'),
-            self.endpoint_path
-        );
         let part = reqwest::multipart::Part::bytes(audio.to_vec())
             .file_name("audio.wav")
             .mime_str("audio/wav")
@@ -42,26 +38,16 @@ impl SttClient {
         if let Some(rf) = &options.response_format {
             form = form.text("response_format", rf.clone());
         }
-        let response = self
-            .http_client
-            .post(&endpoint)
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .send()
+        let (status, body) = self
+            .transport
+            .execute_multipart_post(&self.endpoint_path, form)
             .await
             .map_err(|e| {
                 Error::network_with_context(
-                    format!("STT request failed: {}", e),
+                    format!("STT request failed: {e}"),
                     ErrorContext::new().with_source("stt"),
                 )
             })?;
-        let status = response.status();
-        let body = response.text().await.map_err(|e| {
-            Error::network_with_context(
-                format!("Failed to read STT response: {}", e),
-                ErrorContext::new(),
-            )
-        })?;
         if !status.is_success() {
             return Err(Error::api_with_context(
                 format!("STT API error ({}): {}", status, body),
@@ -95,7 +81,9 @@ pub struct SttClientBuilder {
     api_key: Option<String>,
     base_url: Option<String>,
     endpoint_path: Option<String>,
+    #[allow(dead_code)]
     timeout_secs: u64,
+    manifest: Option<ProtocolManifest>,
 }
 
 impl SttClientBuilder {
@@ -106,6 +94,7 @@ impl SttClientBuilder {
             base_url: None,
             endpoint_path: None,
             timeout_secs: 60,
+            manifest: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -136,24 +125,16 @@ impl SttClientBuilder {
         let base_url = self
             .base_url
             .unwrap_or_else(|| "https://api.openai.com".to_string());
-        let endpoint_path = self
-            .endpoint_path
-            .unwrap_or_else(|| "/v1/audio/transcriptions".to_string());
-        let endpoint_path = if endpoint_path.starts_with('/') {
-            endpoint_path
-        } else {
-            format!("/{}", endpoint_path)
-        };
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| Error::configuration(format!("Failed to create HTTP client: {}", e)))?;
+        let endpoint_path = normalize_endpoint_path(
+            self.endpoint_path
+                .unwrap_or_else(|| "/v1/audio/transcriptions".to_string()),
+        );
+        let transport =
+            build_ancillary_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
         Ok(SttClient {
-            http_client,
+            transport,
             model,
-            base_url,
             endpoint_path,
-            api_key,
         })
     }
 }

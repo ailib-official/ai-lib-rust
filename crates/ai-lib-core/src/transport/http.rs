@@ -413,6 +413,66 @@ impl HttpTransport {
             ),
         }))
     }
+
+    /// JSON POST/PUT for ancillary APIs (embeddings, rerank, …) via the same
+    /// route/auth/proxy stack as chat ([GOV-007]).
+    pub async fn execute_json_post(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<(reqwest::StatusCode, String)> {
+        let resp = self
+            .execute_stream_response("POST", path, body, None, false)
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| {
+            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        })?;
+        Ok((status, text))
+    }
+
+    /// JSON POST that returns raw response bytes (TTS audio, etc.).
+    pub async fn execute_bytes_post(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<(reqwest::StatusCode, bytes::Bytes)> {
+        let resp = self
+            .execute_stream_response("POST", path, body, None, false)
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(|e| {
+            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        })?;
+        Ok((status, bytes))
+    }
+
+    /// Multipart POST (STT uploads) via the same route/auth/proxy stack ([GOV-007]).
+    ///
+    /// Note: `multipart::Form` is single-use, so this tries the preferred route only.
+    /// Higher layers may rebuild the form and retry on transport failure.
+    pub async fn execute_multipart_post(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<(reqwest::StatusCode, String)> {
+        let interpolated_path = path.replace("{model}", &self.model);
+        let url = format!("{}{}", self.base_url, interpolated_path);
+        let indices = self.preferred_route_indices();
+        let idx = indices.first().copied().unwrap_or(0);
+        let route = &self.routes[idx];
+        let mut req = route.client.post(&url);
+        req = self.apply_auth(req);
+        let response = req.multipart(form).send().await.map_err(|e| {
+            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        })?;
+        self.preferred_route.store(idx, Ordering::Relaxed);
+        let status = response.status();
+        let text = response.text().await.map_err(|e| {
+            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        })?;
+        Ok((status, text))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
