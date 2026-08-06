@@ -180,7 +180,10 @@ impl<'a> ChatRequestBuilder<'a> {
         let base_client = self.client;
         let unified_req = self.into_unified_request();
 
-        // Pre-build fallback clients (async), then run unified policy loops.
+        // Pre-build fallback clients (async), then run unified PolicyEngine loops.
+        // [GOV-007 / RUST-005] Batch (`AiClient::execute_with_retry`) and this stream
+        // path share the same PolicyEngine::decide / pre_decide entry — stream adds
+        // commit-after-first-event only (no second dialect policy).
         let mut fallback_clients: Vec<AiClient> = Vec::with_capacity(base_client.fallbacks.len());
         for model in &base_client.fallbacks {
             if let Ok(c) = base_client.with_model(model).await {
