@@ -1,18 +1,19 @@
 //! TTS (Text-to-Speech) client.
 //! TTS（文本转语音）客户端。
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat (`execute_stream_response`) — [GOV-007].
 
 use super::types;
 use super::types::{AudioOutput, TtsOptions};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 use std::str::FromStr;
 
 /// Client for text-to-speech synthesis.
 pub struct TtsClient {
-    http_client: reqwest::Client,
+    transport: HttpTransport,
     model: String,
-    base_url: String,
     endpoint_path: String,
-    api_key: String,
 }
 
 impl TtsClient {
@@ -21,11 +22,6 @@ impl TtsClient {
     }
 
     pub async fn synthesize(&self, text: &str, options: &TtsOptions) -> Result<AudioOutput> {
-        let endpoint = format!(
-            "{}{}",
-            self.base_url.trim_end_matches('/'),
-            self.endpoint_path
-        );
         let mut body = serde_json::json!({
             "model": self.model,
             "input": text,
@@ -39,24 +35,20 @@ impl TtsClient {
         if let Some(rf) = &options.response_format {
             body["response_format"] = serde_json::Value::String(rf.clone());
         }
-        let response = self
-            .http_client
-            .post(&endpoint)
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+        let resp = self
+            .transport
+            .execute_stream_response("POST", &self.endpoint_path, &body, None, false)
             .await
             .map_err(|e| {
                 Error::network_with_context(
-                    format!("TTS request failed: {}", e),
+                    format!("TTS request failed: {e}"),
                     ErrorContext::new().with_source("tts"),
                 )
             })?;
-        let status = response.status();
-        let bytes = response.bytes().await.map_err(|e| {
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(|e| {
             Error::network_with_context(
-                format!("Failed to read TTS response: {}", e),
+                format!("Failed to read TTS response: {e}"),
                 ErrorContext::new(),
             )
         })?;
@@ -83,11 +75,20 @@ impl TtsClient {
     }
 }
 
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    }
+}
+
 pub struct TtsClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
     endpoint_path: Option<String>,
+    #[allow(dead_code)]
     timeout_secs: u64,
 }
 
@@ -129,24 +130,15 @@ impl TtsClientBuilder {
         let base_url = self
             .base_url
             .unwrap_or_else(|| "https://api.openai.com".to_string());
-        let endpoint_path = self
-            .endpoint_path
-            .unwrap_or_else(|| "/v1/audio/speech".to_string());
-        let endpoint_path = if endpoint_path.starts_with('/') {
-            endpoint_path
-        } else {
-            format!("/{}", endpoint_path)
-        };
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| Error::configuration(format!("Failed to create HTTP client: {}", e)))?;
+        let endpoint_path = ensure_abs_path(
+            self.endpoint_path
+                .unwrap_or_else(|| "/v1/audio/speech".to_string()),
+        );
+        let transport = HttpTransport::with_explicit_bearer(&base_url, &model, &api_key)?;
         Ok(TtsClient {
-            http_client,
+            transport,
             model,
-            base_url,
             endpoint_path,
-            api_key,
         })
     }
 }

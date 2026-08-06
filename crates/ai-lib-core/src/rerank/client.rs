@@ -2,19 +2,20 @@
 //!
 //! Protocol-driven construction: prefer [`RerankerClientBuilder::from_manifest`] /
 //! [`RerankerClientBuilder::from_model`]. No silent Cohere host default ([ARCH-001]).
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat (`execute_stream_response`) — [GOV-007].
 
 use super::types::{RerankOptions, RerankResult};
 use crate::credentials::{self, resolve_credential};
 use crate::protocol::{ProtocolLoader, ProtocolManifest};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 
 /// Client for document reranking.
 pub struct RerankerClient {
-    http_client: reqwest::Client,
+    transport: HttpTransport,
     model: String,
-    base_url: String,
     endpoint_path: String,
-    api_key: String,
 }
 
 impl RerankerClient {
@@ -28,7 +29,6 @@ impl RerankerClient {
         documents: &[impl AsRef<str>],
         options: &RerankOptions,
     ) -> Result<Vec<RerankResult>> {
-        let endpoint = join_url(&self.base_url, &self.endpoint_path);
         let docs: Vec<String> = documents.iter().map(|d| d.as_ref().to_string()).collect();
         let mut body = serde_json::json!({
             "model": self.model,
@@ -41,24 +41,20 @@ impl RerankerClient {
         if let Some(max_tokens) = options.max_tokens_per_doc {
             body["max_tokens_per_doc"] = serde_json::json!(max_tokens);
         }
-        let response = self
-            .http_client
-            .post(&endpoint)
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+        let resp = self
+            .transport
+            .execute_stream_response("POST", &self.endpoint_path, &body, None, false)
             .await
             .map_err(|e| {
                 Error::network_with_context(
-                    format!("Rerank request failed: {}", e),
+                    format!("Rerank request failed: {e}"),
                     ErrorContext::new().with_source("rerank"),
                 )
             })?;
-        let status = response.status();
-        let body_str = response.text().await.map_err(|e| {
+        let status = resp.status();
+        let body_str = resp.text().await.map_err(|e| {
             Error::network_with_context(
-                format!("Failed to read Rerank response: {}", e),
+                format!("Failed to read Rerank response: {e}"),
                 ErrorContext::new(),
             )
         })?;
@@ -100,14 +96,12 @@ impl RerankerClient {
     }
 }
 
-fn join_url(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    let path = if path.starts_with('/') {
-        path.to_string()
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
     } else {
-        format!("/{}", path)
-    };
-    format!("{}{}", base, path)
+        format!("/{path}")
+    }
 }
 
 fn rerank_path_from_manifest(manifest: &ProtocolManifest) -> String {
@@ -124,13 +118,29 @@ fn rerank_path_from_manifest(manifest: &ProtocolManifest) -> String {
     "/rerank".to_string()
 }
 
+fn build_transport(
+    manifest: Option<&ProtocolManifest>,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+) -> Result<HttpTransport> {
+    match manifest {
+        Some(m) => {
+            HttpTransport::new_with_base_url_and_credential(m, model, Some(base_url), Some(api_key))
+        }
+        None => HttpTransport::with_explicit_bearer(base_url, model, api_key),
+    }
+}
+
 pub struct RerankerClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
     base_url: Option<String>,
     endpoint_path: Option<String>,
+    #[allow(dead_code)]
     timeout_secs: u64,
     protocol_path: Option<String>,
+    manifest: Option<ProtocolManifest>,
 }
 
 impl RerankerClientBuilder {
@@ -142,6 +152,7 @@ impl RerankerClientBuilder {
             endpoint_path: None,
             timeout_secs: 60,
             protocol_path: None,
+            manifest: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -188,6 +199,7 @@ impl RerankerClientBuilder {
             self.endpoint_path = Some(rerank_path_from_manifest(manifest));
         }
         self.model = Some(model_id.into());
+        self.manifest = Some(manifest.clone());
         Ok(self)
     }
 
@@ -220,22 +232,13 @@ impl RerankerClientBuilder {
                 "base_url required: use from_manifest/from_model or set base_url explicitly (no vendor default)",
             )
         })?;
-        let endpoint_path = self.endpoint_path.unwrap_or_else(|| "/rerank".to_string());
-        let endpoint_path = if endpoint_path.starts_with('/') {
-            endpoint_path
-        } else {
-            format!("/{}", endpoint_path)
-        };
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| Error::configuration(format!("Failed to create HTTP client: {}", e)))?;
+        let endpoint_path =
+            ensure_abs_path(self.endpoint_path.unwrap_or_else(|| "/rerank".to_string()));
+        let transport = build_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
         Ok(RerankerClient {
-            http_client,
+            transport,
             model,
-            base_url,
             endpoint_path,
-            api_key,
         })
     }
 }

@@ -413,6 +413,58 @@ impl HttpTransport {
             ),
         }))
     }
+
+    /// Same route/auth/proxy stack as [`Self::execute_stream_response`], for multipart bodies
+    /// (e.g. STT uploads). `Form` is single-use; failover across routes requires a rebuilt form
+    /// at the caller — this method uses the preferred route first (same index selection).
+    pub async fn execute_multipart_response(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<reqwest::Response> {
+        let interpolated_path = path.replace("{model}", &self.model);
+        let url = format!("{}{}", self.base_url, interpolated_path);
+        let indices = self.preferred_route_indices();
+        let idx = indices.first().copied().unwrap_or(0);
+        let route = &self.routes[idx];
+        let mut req = route.client.post(&url);
+        req = self.apply_auth(req);
+        let response = req.multipart(form).send().await.map_err(|e| {
+            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        })?;
+        self.preferred_route.store(idx, Ordering::Relaxed);
+        tracing::debug!(
+            route = route.label.as_str(),
+            url = url.as_str(),
+            "http multipart route selected"
+        );
+        Ok(response)
+    }
+
+    /// Build transport when only explicit base_url + bearer secret are known.
+    ///
+    /// Delegates to [`Self::new_with_base_url_and_credential`] — not a second HTTP stack.
+    /// Prefer the manifest-based constructor whenever a protocol document is available.
+    pub fn with_explicit_bearer(base_url: &str, model: &str, api_key: &str) -> Result<Self> {
+        let manifest = serde_json::from_value(serde_json::json!({
+            "id": "explicit",
+            "protocol_version": "1.0",
+            "endpoint": {
+                "base_url": base_url,
+                "auth": { "type": "bearer", "token_env": "AI_LIB_EXPLICIT_API_KEY" }
+            },
+            "capabilities": { "streaming": false, "tools": false, "vision": false },
+            "provider_id": "explicit",
+            "status": "stable",
+            "category": "ai_provider",
+            "official_url": "",
+            "support_contact": ""
+        }))
+        .map_err(|e| {
+            crate::Error::configuration(format!("explicit bearer manifest: {e}"))
+        })?;
+        Self::new_with_base_url_and_credential(&manifest, model, Some(base_url), Some(api_key))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

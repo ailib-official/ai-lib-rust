@@ -3,18 +3,20 @@
 //! Protocol-driven construction: prefer [`EmbeddingClientBuilder::from_manifest`] /
 //! [`EmbeddingClientBuilder::from_model`]. Base URL and credentials come from the
 //! provider manifest ([ARCH-001]); there is no silent default to a vendor host.
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat (`execute_stream_response`) — [GOV-007].
 
 use super::types::{Embedding, EmbeddingRequest, EmbeddingResponse, EmbeddingUsage};
 use crate::credentials::{self, resolve_credential};
 use crate::protocol::{ProtocolLoader, ProtocolManifest};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 
 pub struct EmbeddingClient {
-    http_client: reqwest::Client,
+    transport: HttpTransport,
     model: String,
     base_url: String,
     endpoint_path: String,
-    api_key: String,
     dimensions: Option<usize>,
     max_batch_size: usize,
 }
@@ -60,51 +62,52 @@ impl EmbeddingClient {
         if let Some(dims) = self.dimensions {
             request = request.with_dimensions(dims);
         }
-        let endpoint = join_url(&self.base_url, &self.endpoint_path);
-        let response = self
-            .http_client
-            .post(&endpoint)
-            .bearer_auth(&self.api_key)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+        let body = serde_json::to_value(&request).map_err(|e| {
+            Error::configuration(format!("Failed to serialize embedding request: {e}"))
+        })?;
+        // Mainstream chat path: execute_stream_response (JSON accept, not SSE).
+        let resp = self
+            .transport
+            .execute_stream_response("POST", &self.endpoint_path, &body, None, false)
             .await
             .map_err(|e| {
                 Error::network_with_context(
-                    format!("Embedding request failed: {}", e),
+                    format!("Embedding request failed: {e}"),
                     ErrorContext::new().with_source("embeddings"),
                 )
             })?;
-        let status = response.status();
-        let body = response.text().await.map_err(|e| {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| {
             Error::network_with_context(
-                format!("Failed to read response: {}", e),
+                format!("Failed to read response: {e}"),
                 ErrorContext::new(),
             )
         })?;
         if !status.is_success() {
             return Err(Error::api_with_context(
-                format!("Embedding API error ({}): {}", status, body),
+                format!("Embedding API error ({}): {}", status, text),
                 ErrorContext::new(),
             ));
         }
-        let json: serde_json::Value = serde_json::from_str(&body)?;
+        let json: serde_json::Value = serde_json::from_str(&text)?;
         EmbeddingResponse::from_openai_format(&json)
     }
 
     pub fn model(&self) -> &str {
         &self.model
     }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 }
 
-fn join_url(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    let path = if path.starts_with('/') {
-        path.to_string()
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
     } else {
-        format!("/{}", path)
-    };
-    format!("{}{}", base, path)
+        format!("/{path}")
+    }
 }
 
 /// Resolve embeddings path from manifest endpoints / services, else OpenAI-compat `/embeddings`.
@@ -122,6 +125,20 @@ fn embeddings_path_from_manifest(manifest: &ProtocolManifest) -> String {
     "/embeddings".to_string()
 }
 
+fn build_transport(
+    manifest: Option<&ProtocolManifest>,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+) -> Result<HttpTransport> {
+    match manifest {
+        Some(m) => {
+            HttpTransport::new_with_base_url_and_credential(m, model, Some(base_url), Some(api_key))
+        }
+        None => HttpTransport::with_explicit_bearer(base_url, model, api_key),
+    }
+}
+
 pub struct EmbeddingClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
@@ -129,8 +146,10 @@ pub struct EmbeddingClientBuilder {
     endpoint_path: Option<String>,
     dimensions: Option<usize>,
     max_batch_size: usize,
+    #[allow(dead_code)]
     timeout_secs: u64,
     protocol_path: Option<String>,
+    manifest: Option<ProtocolManifest>,
 }
 
 impl EmbeddingClientBuilder {
@@ -144,6 +163,7 @@ impl EmbeddingClientBuilder {
             max_batch_size: 100,
             timeout_secs: 60,
             protocol_path: None,
+            manifest: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -195,12 +215,11 @@ impl EmbeddingClientBuilder {
             self.endpoint_path = Some(embeddings_path_from_manifest(manifest));
         }
         self.model = Some(model_id.into());
+        self.manifest = Some(manifest.clone());
         Ok(self)
     }
 
     /// Load provider/model via [`ProtocolLoader`] then build.
-    ///
-    /// `model` uses `provider/model-id` form (same as [`crate::AiClientBuilder`]).
     pub async fn from_model(self, model: &str) -> Result<EmbeddingClient> {
         let mut loader = ProtocolLoader::new();
         if let Some(path) = &self.protocol_path {
@@ -230,19 +249,16 @@ impl EmbeddingClientBuilder {
                 "base_url required: use from_manifest/from_model or set base_url explicitly (no vendor default)",
             )
         })?;
-        let endpoint_path = self
-            .endpoint_path
-            .unwrap_or_else(|| "/embeddings".to_string());
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| Error::configuration(format!("Failed to create HTTP client: {}", e)))?;
+        let endpoint_path = ensure_abs_path(
+            self.endpoint_path
+                .unwrap_or_else(|| "/embeddings".to_string()),
+        );
+        let transport = build_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
         Ok(EmbeddingClient {
-            http_client,
+            transport,
             model,
             base_url,
             endpoint_path,
-            api_key,
             dimensions: self.dimensions,
             max_batch_size: self.max_batch_size,
         })
@@ -288,7 +304,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(client.model(), "emb-1");
-        assert!(client.base_url.contains("example.test"));
+        assert!(client.base_url().contains("example.test"));
         std::env::remove_var("TESTPROV_API_KEY");
     }
 
@@ -301,5 +317,17 @@ mod tests {
             .await;
         assert!(res.is_err());
         assert!(res.err().unwrap().to_string().contains("base_url"));
+    }
+
+    #[tokio::test]
+    async fn build_uses_http_transport_not_raw_client_field() {
+        let client = EmbeddingClient::builder()
+            .model("m")
+            .api_key("k")
+            .base_url("https://example.test/v1")
+            .build()
+            .await
+            .unwrap();
+        assert_eq!(client.endpoint_path, "/embeddings");
     }
 }
