@@ -1,11 +1,11 @@
 //! TTS (Text-to-Speech) client.
 //! TTS（文本转语音）客户端。
-//! HTTP via [`crate::transport::HttpTransport`] ([GOV-007]).
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat (`execute_stream_response`) — [GOV-007].
 
 use super::types;
 use super::types::{AudioOutput, TtsOptions};
-use crate::protocol::ProtocolManifest;
-use crate::transport::{build_ancillary_transport, normalize_endpoint_path, HttpTransport};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 use std::str::FromStr;
 
@@ -35,9 +35,9 @@ impl TtsClient {
         if let Some(rf) = &options.response_format {
             body["response_format"] = serde_json::Value::String(rf.clone());
         }
-        let (status, bytes) = self
+        let resp = self
             .transport
-            .execute_bytes_post(&self.endpoint_path, &body)
+            .execute_stream_response("POST", &self.endpoint_path, &body, None, false)
             .await
             .map_err(|e| {
                 Error::network_with_context(
@@ -45,6 +45,13 @@ impl TtsClient {
                     ErrorContext::new().with_source("tts"),
                 )
             })?;
+        let status = resp.status();
+        let bytes = resp.bytes().await.map_err(|e| {
+            Error::network_with_context(
+                format!("Failed to read TTS response: {e}"),
+                ErrorContext::new(),
+            )
+        })?;
         if !status.is_success() {
             let body_str = String::from_utf8_lossy(&bytes);
             return Err(Error::api_with_context(
@@ -68,6 +75,14 @@ impl TtsClient {
     }
 }
 
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    }
+}
+
 pub struct TtsClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
@@ -75,7 +90,6 @@ pub struct TtsClientBuilder {
     endpoint_path: Option<String>,
     #[allow(dead_code)]
     timeout_secs: u64,
-    manifest: Option<ProtocolManifest>,
 }
 
 impl TtsClientBuilder {
@@ -86,7 +100,6 @@ impl TtsClientBuilder {
             base_url: None,
             endpoint_path: None,
             timeout_secs: 60,
-            manifest: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -117,12 +130,11 @@ impl TtsClientBuilder {
         let base_url = self
             .base_url
             .unwrap_or_else(|| "https://api.openai.com".to_string());
-        let endpoint_path = normalize_endpoint_path(
+        let endpoint_path = ensure_abs_path(
             self.endpoint_path
                 .unwrap_or_else(|| "/v1/audio/speech".to_string()),
         );
-        let transport =
-            build_ancillary_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
+        let transport = HttpTransport::with_explicit_bearer(&base_url, &model, &api_key)?;
         Ok(TtsClient {
             transport,
             model,

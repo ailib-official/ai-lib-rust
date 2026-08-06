@@ -12,7 +12,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **GOV-007**: Ancillary clients (`embeddings` / `stt` / `tts` / `rerank`) route HTTP through shared `HttpTransport` (auth/proxy/route parity with chat) instead of private `reqwest::Client` instances.
+- **GOV-007**: Ancillary clients (`embeddings` / `stt` / `tts` / `rerank`) call the same `HttpTransport` + `execute_stream_response` path as chat (multipart uses `execute_multipart_response` on that stack). No parallel HTTP client or ancillary transport dialect.
 - **ALR-TTC-011**: Document dialect matrix — `shell`/`bash` are manifest-driven; `dsml` uses U+FF5C delimiter hardcode as the wire form of `tag: dsml`; `function` dialect remains deferred (not implemented).
 - **ALR-TTC-014**: L2/L3 text-tool prompts steer native-first and explicitly forbid DSML delimiters (`｜｜DSML｜｜` / U+FF5C), mismatched closes, and flat args without `arguments`.
 

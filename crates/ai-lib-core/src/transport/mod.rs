@@ -15,9 +15,7 @@
 //! for their own HTTP clients; LLM traffic via `HttpTransport` follows the rules above
 //! unless the host sets matching process env vars before initializing `AiClient`.
 
-pub mod ancillary;
 pub mod http;
 pub mod middleware;
 
-pub use ancillary::{build_ancillary_transport, normalize_endpoint_path, synthetic_bearer_manifest};
 pub use http::{HttpTransport, TransportError};

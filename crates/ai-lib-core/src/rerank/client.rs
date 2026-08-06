@@ -2,12 +2,13 @@
 //!
 //! Protocol-driven construction: prefer [`RerankerClientBuilder::from_manifest`] /
 //! [`RerankerClientBuilder::from_model`]. No silent Cohere host default ([ARCH-001]).
-//! HTTP via [`crate::transport::HttpTransport`] ([GOV-007]).
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat (`execute_stream_response`) — [GOV-007].
 
 use super::types::{RerankOptions, RerankResult};
 use crate::credentials::{self, resolve_credential};
 use crate::protocol::{ProtocolLoader, ProtocolManifest};
-use crate::transport::{build_ancillary_transport, normalize_endpoint_path, HttpTransport};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 
 /// Client for document reranking.
@@ -40,9 +41,9 @@ impl RerankerClient {
         if let Some(max_tokens) = options.max_tokens_per_doc {
             body["max_tokens_per_doc"] = serde_json::json!(max_tokens);
         }
-        let (status, body_str) = self
+        let resp = self
             .transport
-            .execute_json_post(&self.endpoint_path, &body)
+            .execute_stream_response("POST", &self.endpoint_path, &body, None, false)
             .await
             .map_err(|e| {
                 Error::network_with_context(
@@ -50,6 +51,13 @@ impl RerankerClient {
                     ErrorContext::new().with_source("rerank"),
                 )
             })?;
+        let status = resp.status();
+        let body_str = resp.text().await.map_err(|e| {
+            Error::network_with_context(
+                format!("Failed to read Rerank response: {e}"),
+                ErrorContext::new(),
+            )
+        })?;
         if !status.is_success() {
             return Err(Error::api_with_context(
                 format!("Rerank API error ({}): {}", status, body_str),
@@ -88,6 +96,14 @@ impl RerankerClient {
     }
 }
 
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    }
+}
+
 fn rerank_path_from_manifest(manifest: &ProtocolManifest) -> String {
     if let Some(eps) = &manifest.endpoints {
         if let Some(ep) = eps.get("rerank") {
@@ -100,6 +116,20 @@ fn rerank_path_from_manifest(manifest: &ProtocolManifest) -> String {
         }
     }
     "/rerank".to_string()
+}
+
+fn build_transport(
+    manifest: Option<&ProtocolManifest>,
+    base_url: &str,
+    model: &str,
+    api_key: &str,
+) -> Result<HttpTransport> {
+    match manifest {
+        Some(m) => {
+            HttpTransport::new_with_base_url_and_credential(m, model, Some(base_url), Some(api_key))
+        }
+        None => HttpTransport::with_explicit_bearer(base_url, model, api_key),
+    }
 }
 
 pub struct RerankerClientBuilder {
@@ -203,9 +233,8 @@ impl RerankerClientBuilder {
             )
         })?;
         let endpoint_path =
-            normalize_endpoint_path(self.endpoint_path.unwrap_or_else(|| "/rerank".to_string()));
-        let transport =
-            build_ancillary_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
+            ensure_abs_path(self.endpoint_path.unwrap_or_else(|| "/rerank".to_string()));
+        let transport = build_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
         Ok(RerankerClient {
             transport,
             model,

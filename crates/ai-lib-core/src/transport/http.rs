@@ -414,48 +414,14 @@ impl HttpTransport {
         }))
     }
 
-    /// JSON POST/PUT for ancillary APIs (embeddings, rerank, …) via the same
-    /// route/auth/proxy stack as chat ([GOV-007]).
-    pub async fn execute_json_post(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<(reqwest::StatusCode, String)> {
-        let resp = self
-            .execute_stream_response("POST", path, body, None, false)
-            .await?;
-        let status = resp.status();
-        let text = resp.text().await.map_err(|e| {
-            crate::Error::Transport(crate::transport::TransportError::Http(e))
-        })?;
-        Ok((status, text))
-    }
-
-    /// JSON POST that returns raw response bytes (TTS audio, etc.).
-    pub async fn execute_bytes_post(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<(reqwest::StatusCode, bytes::Bytes)> {
-        let resp = self
-            .execute_stream_response("POST", path, body, None, false)
-            .await?;
-        let status = resp.status();
-        let bytes = resp.bytes().await.map_err(|e| {
-            crate::Error::Transport(crate::transport::TransportError::Http(e))
-        })?;
-        Ok((status, bytes))
-    }
-
-    /// Multipart POST (STT uploads) via the same route/auth/proxy stack ([GOV-007]).
-    ///
-    /// Note: `multipart::Form` is single-use, so this tries the preferred route only.
-    /// Higher layers may rebuild the form and retry on transport failure.
-    pub async fn execute_multipart_post(
+    /// Same route/auth/proxy stack as [`Self::execute_stream_response`], for multipart bodies
+    /// (e.g. STT uploads). `Form` is single-use; failover across routes requires a rebuilt form
+    /// at the caller — this method uses the preferred route first (same index selection).
+    pub async fn execute_multipart_response(
         &self,
         path: &str,
         form: reqwest::multipart::Form,
-    ) -> Result<(reqwest::StatusCode, String)> {
+    ) -> Result<reqwest::Response> {
         let interpolated_path = path.replace("{model}", &self.model);
         let url = format!("{}{}", self.base_url, interpolated_path);
         let indices = self.preferred_route_indices();
@@ -467,11 +433,37 @@ impl HttpTransport {
             crate::Error::Transport(crate::transport::TransportError::Http(e))
         })?;
         self.preferred_route.store(idx, Ordering::Relaxed);
-        let status = response.status();
-        let text = response.text().await.map_err(|e| {
-            crate::Error::Transport(crate::transport::TransportError::Http(e))
+        tracing::debug!(
+            route = route.label.as_str(),
+            url = url.as_str(),
+            "http multipart route selected"
+        );
+        Ok(response)
+    }
+
+    /// Build transport when only explicit base_url + bearer secret are known.
+    ///
+    /// Delegates to [`Self::new_with_base_url_and_credential`] — not a second HTTP stack.
+    /// Prefer the manifest-based constructor whenever a protocol document is available.
+    pub fn with_explicit_bearer(base_url: &str, model: &str, api_key: &str) -> Result<Self> {
+        let manifest = serde_json::from_value(serde_json::json!({
+            "id": "explicit",
+            "protocol_version": "1.0",
+            "endpoint": {
+                "base_url": base_url,
+                "auth": { "type": "bearer", "token_env": "AI_LIB_EXPLICIT_API_KEY" }
+            },
+            "capabilities": { "streaming": false, "tools": false, "vision": false },
+            "provider_id": "explicit",
+            "status": "stable",
+            "category": "ai_provider",
+            "official_url": "",
+            "support_contact": ""
+        }))
+        .map_err(|e| {
+            crate::Error::configuration(format!("explicit bearer manifest: {e}"))
         })?;
-        Ok((status, text))
+        Self::new_with_base_url_and_credential(&manifest, model, Some(base_url), Some(api_key))
     }
 }
 

@@ -1,9 +1,9 @@
 //! STT (Speech-to-Text) client.
-//! HTTP via [`crate::transport::HttpTransport`] ([GOV-007]).
+//!
+//! HTTP uses the same [`HttpTransport`] stack as chat ([GOV-007]).
 
 use super::types::{SttOptions, Transcription};
-use crate::protocol::ProtocolManifest;
-use crate::transport::{build_ancillary_transport, normalize_endpoint_path, HttpTransport};
+use crate::transport::HttpTransport;
 use crate::{Error, ErrorContext, Result};
 
 /// Client for speech-to-text transcription.
@@ -38,9 +38,9 @@ impl SttClient {
         if let Some(rf) = &options.response_format {
             form = form.text("response_format", rf.clone());
         }
-        let (status, body) = self
+        let resp = self
             .transport
-            .execute_multipart_post(&self.endpoint_path, form)
+            .execute_multipart_response(&self.endpoint_path, form)
             .await
             .map_err(|e| {
                 Error::network_with_context(
@@ -48,6 +48,13 @@ impl SttClient {
                     ErrorContext::new().with_source("stt"),
                 )
             })?;
+        let status = resp.status();
+        let body = resp.text().await.map_err(|e| {
+            Error::network_with_context(
+                format!("Failed to read STT response: {e}"),
+                ErrorContext::new(),
+            )
+        })?;
         if !status.is_success() {
             return Err(Error::api_with_context(
                 format!("STT API error ({}): {}", status, body),
@@ -76,6 +83,14 @@ impl SttClient {
     }
 }
 
+fn ensure_abs_path(path: String) -> String {
+    if path.starts_with('/') {
+        path
+    } else {
+        format!("/{path}")
+    }
+}
+
 pub struct SttClientBuilder {
     model: Option<String>,
     api_key: Option<String>,
@@ -83,7 +98,6 @@ pub struct SttClientBuilder {
     endpoint_path: Option<String>,
     #[allow(dead_code)]
     timeout_secs: u64,
-    manifest: Option<ProtocolManifest>,
 }
 
 impl SttClientBuilder {
@@ -94,7 +108,6 @@ impl SttClientBuilder {
             base_url: None,
             endpoint_path: None,
             timeout_secs: 60,
-            manifest: None,
         }
     }
     pub fn model(mut self, model: impl Into<String>) -> Self {
@@ -125,12 +138,11 @@ impl SttClientBuilder {
         let base_url = self
             .base_url
             .unwrap_or_else(|| "https://api.openai.com".to_string());
-        let endpoint_path = normalize_endpoint_path(
+        let endpoint_path = ensure_abs_path(
             self.endpoint_path
                 .unwrap_or_else(|| "/v1/audio/transcriptions".to_string()),
         );
-        let transport =
-            build_ancillary_transport(self.manifest.as_ref(), &base_url, &model, &api_key)?;
+        let transport = HttpTransport::with_explicit_bearer(&base_url, &model, &api_key)?;
         Ok(SttClient {
             transport,
             model,
