@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 1.3.0 - 2026-08-07
+
+### Milestone
+
+- **GOV-007 Wave2 + text-tool hardening**: Shared `HttpTransport` for ancillary APIs; DeepSeek DSML hybrid / format-recovery ladder. crates.io **1.3.0**. PROTO-PIN ai-protocol **v1.2.0** (`d61b701`).
 ### Added
 
 - **ALR-TTC-010**: `parse_dsml_dialect` accepts hybrid DSML `tool_call` wrappers with standard JSON bodies (ttc-010), in addition to invoke/parameter (ttc-007).
