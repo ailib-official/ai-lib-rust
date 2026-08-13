@@ -20,7 +20,7 @@ This is protocol-driven for chat, but not “zero provider code”: the repo als
 
 Published on [crates.io](https://crates.io/crates/ai-lib-rust): **`ai-lib-core`**, **`ai-lib-contact`**, **`ai-lib-rust`** (all **1.3.0**). `ai-lib-wasm` is built for `wasm32-wasip1` and is not published.
 
-> **Pin:** Prefer crates.io **1.3.0** (tag `v1.3.0`). CI PROTO-PIN is ai-protocol git `954934d` (PT-TTC-012; last npm cut remains **v1.2.0**). See [CHANGELOG](CHANGELOG.md).
+> **Pin:** Prefer crates.io **1.3.0** (tag `v1.3.0`). CI PROTO-PIN is ai-protocol git `29015b46` (PT-GEN-003 / PT-TTC-012; last npm cut remains **v1.2.0**). See [CHANGELOG](CHANGELOG.md).
 
 ## Quick start
 

@@ -63,6 +63,7 @@ async-recursion = "1.0"
 default = ["keyring"]
 keyring = ["dep:keyring"]
 embeddings = []
+generative = []
 batch = []
 mcp = []
 computer_use = []
@@ -73,6 +74,6 @@ tts = []
 reranking = []
 full = [
     "keyring",
-    "embeddings", "mcp", "computer_use", "multimodal", "reasoning",
+    "embeddings", "generative", "mcp", "computer_use", "multimodal", "reasoning",
     "stt", "tts", "reranking",
 ]

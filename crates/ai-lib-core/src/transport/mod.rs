@@ -18,4 +18,4 @@
 pub mod http;
 pub mod middleware;
 
-pub use http::{HttpTransport, TransportError};
+pub use http::{join_base_and_path, HttpTransport, TransportError};

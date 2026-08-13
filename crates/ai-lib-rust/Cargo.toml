@@ -82,6 +82,7 @@ harness = false
 default = ["keyring"]
 keyring = ["dep:keyring", "ai-lib-core/keyring"]
 embeddings = ["ai-lib-core/embeddings"]
+generative = ["ai-lib-core/generative"]
 batch = ["ai-lib-core/batch", "ai-lib-contact/batch"]
 guardrails = ["ai-lib-contact/guardrails"]
 tokens = ["ai-lib-contact/tokens"]
@@ -97,7 +98,7 @@ routing_mvp = ["ai-lib-contact/routing_mvp"]
 interceptors = ["ai-lib-contact/interceptors"]
 full = [
     "keyring",
-    "embeddings", "batch", "guardrails", "tokens", "telemetry",
+    "embeddings", "generative", "batch", "guardrails", "tokens", "telemetry",
     "routing_mvp", "interceptors",
     "mcp", "computer_use", "multimodal", "reasoning",
     "stt", "tts", "reranking",
