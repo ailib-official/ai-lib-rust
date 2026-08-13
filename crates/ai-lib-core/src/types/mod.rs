@@ -59,6 +59,7 @@
 pub mod content_encode;
 pub mod events;
 pub mod execution_result;
+pub mod generative;
 pub mod manifest_encode;
 pub mod message;
 pub mod text_tool;
@@ -67,6 +68,10 @@ pub mod tool;
 pub use content_encode::{encode_blocks_for_anthropic, encode_blocks_for_gemini};
 pub use events::StreamingEvent;
 pub use execution_result::{ExecutionMetadata, ExecutionResult, ExecutionUsage};
+pub use generative::{
+    GeneratedImage, ImageGenerationRequest, ImageGenerationResult, SpeechToTextRequest,
+    SpeechToTextResult, TextToSpeechRequest, TextToSpeechResult,
+};
 pub use message::{Message, MessageRole};
 pub use text_tool::{PromptLevel, StandardTextToolParser, TextToolConfig, TextToolParser};
 pub use tool::{ToolCall, ToolDefinition};
