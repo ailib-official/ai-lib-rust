@@ -31,8 +31,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: ai-protocol v1.2.0 @ d61b701
-          ref: d61b70137ef1f7b736a8945a9105f7e766b24906
+          # PROTO-PIN: ai-protocol git 954934d (PT-TTC-012; npm still 1.2.0)
+          ref: 954934d46b1c5e82af044e8833f8a4fe2b5f255c
           path: ai-protocol
 
       - name: Install Rust
