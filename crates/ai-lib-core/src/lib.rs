@@ -29,6 +29,8 @@ pub mod utils;
 pub mod computer_use;
 #[cfg(all(not(target_arch = "wasm32"), feature = "embeddings"))]
 pub mod embeddings;
+#[cfg(all(not(target_arch = "wasm32"), feature = "generative"))]
+pub mod generative;
 #[cfg(all(not(target_arch = "wasm32"), feature = "mcp"))]
 pub mod mcp;
 #[cfg(all(not(target_arch = "wasm32"), feature = "multimodal"))]

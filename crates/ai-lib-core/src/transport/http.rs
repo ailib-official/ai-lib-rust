@@ -43,6 +43,18 @@ fn auth_header_value(prefix: &str, secret: &str) -> String {
     }
 }
 
+/// Join provider `base_url` with an endpoint path.
+///
+/// Absolute `http(s)://` paths (PT-GEN-003 DashScope sample) are used as-is so
+/// generative L-Exec can leave chat `compatible-mode` base untouched ([GOV-007]).
+pub fn join_base_and_path(base_url: &str, path: &str) -> String {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        path.to_string()
+    } else {
+        format!("{base_url}{path}")
+    }
+}
+
 pub struct HttpTransport {
     routes: Vec<TransportRoute>,
     preferred_route: AtomicUsize,
@@ -274,7 +286,7 @@ impl HttpTransport {
         accept_event_stream: bool,
     ) -> Result<reqwest::Response> {
         let interpolated_path = path.replace("{model}", &self.model);
-        let url = format!("{}{}", self.base_url, interpolated_path);
+        let url = join_base_and_path(&self.base_url, &interpolated_path);
         let mut last_err = None;
         for idx in self.preferred_route_indices() {
             let route = &self.routes[idx];
@@ -357,7 +369,7 @@ impl HttpTransport {
         query_params: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<serde_json::Value> {
         let interpolated_path = path.replace("{model}", &self.model);
-        let url = format!("{}{}", self.base_url, interpolated_path);
+        let url = join_base_and_path(&self.base_url, &interpolated_path);
         let mut last_err = None;
         for idx in self.preferred_route_indices() {
             let route = &self.routes[idx];
@@ -423,7 +435,7 @@ impl HttpTransport {
         form: reqwest::multipart::Form,
     ) -> Result<reqwest::Response> {
         let interpolated_path = path.replace("{model}", &self.model);
-        let url = format!("{}{}", self.base_url, interpolated_path);
+        let url = join_base_and_path(&self.base_url, &interpolated_path);
         let indices = self.preferred_route_indices();
         let idx = indices.first().copied().unwrap_or(0);
         let route = &self.routes[idx];

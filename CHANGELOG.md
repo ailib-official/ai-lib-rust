@@ -6,11 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **ALR-GEN-002 (Experimental)**: Manifest L-Exec drivers under `generative`
+  (`ImageGenerationClient` / `SpeechToTextClient` / `TextToSpeechClient`) gated by
+  `supports_generative_for_model`; paths from `endpoints.<key>`; OpenAI + DashScope
+  image dialects; shared `HttpTransport` (absolute https paths supported). Feature
+  `generative`.
 - **ALR-GEN-001 (Experimental)**: Generative capability facts on `ModelCapabilityFacts`
   (`image_generation` / `speech_to_text` / `text_to_speech`; omit = unknown) plus
   `ProtocolManifest::supports_generative_for_model` and request DTOs under
-  `types::generative` (no HTTP drivers). PROTO-PIN follows ai-protocol tip
-  `954934d` (PT-GEN-001/002 + PT-TTC-012).
+  `types::generative`.
 
 ### Fixed
 
@@ -23,9 +27,8 @@ All notable changes to this project will be documented in this file.
 - **ALR-TTC-012**: L2/L3 and recovery prompts forbid `<invoke>`/`<parameter>` and
   no longer claim those formats "WILL BE IGNORED" (lenient parse still executes
   well-formed aids). Parse remains global on the lenient path, not vendor-gated.
-- **PROTO-PIN**: CI checkouts `ailib-official/ai-protocol` `954934d` (includes
-  PT-TTC-012 / #63). Last npm release remains **1.2.0**; no protocol semver cut
-  required for this pin.
+- **PROTO-PIN**: CI checkouts `ailib-official/ai-protocol` `29015b46` (PT-GEN-001/002/003
+  + PT-TTC-012). Last npm release remains **1.2.0**; no protocol semver cut required.
 
 ## 1.3.0 - 2026-08-07
 
