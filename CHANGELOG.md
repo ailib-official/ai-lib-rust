@@ -10,6 +10,12 @@ All notable changes to this project will be documented in this file.
   (DeepSeek V4 Pro fallback). Legacy parse aid only; not advertised as a product
   format. Fragments such as `</invoke>` now classify as unparsed markup.
 
+### Changed
+
+- **ALR-TTC-012**: L2/L3 and recovery prompts forbid `<invoke>`/`<parameter>` and
+  no longer claim those formats "WILL BE IGNORED" (lenient parse still executes
+  well-formed aids). Parse remains global on the lenient path, not vendor-gated.
+
 ## 1.3.0 - 2026-08-07
 
 ### Milestone

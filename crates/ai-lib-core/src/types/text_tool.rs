@@ -399,10 +399,10 @@ pub fn tool_format_recovery_message(strategy: ToolFormatRecoveryStrategy) -> &'s
              {\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n\
              </tool_call>\n\
              Rules: matching </tool_call> close tag; JSON must have \"name\" and \"arguments\" object; \
-             NEVER use DSML delimiters, <shell>, <bash>, <function>, _call, or $call. Call the tool again now."
+             NEVER use DSML delimiters, <shell>, <bash>, <function>, <invoke>, <parameter>, _call, or $call. Call the tool again now."
         }
         ToolFormatRecoveryStrategy::NativeOnlyReask => {
-            "STOP. Do not emit any text tool markup (no <tool_call>, no DSML, no <shell>, no _call, no $call). \
+            "STOP. Do not emit any text tool markup (no <tool_call>, no DSML, no <shell>, no <invoke>, no _call, no $call). \
              Call tools ONLY via the native API tool_calls / function-calling channel that was provided. \
              Retry the tool call now using native tool_calls only."
         }
@@ -706,8 +706,9 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
 ///
 /// Observed from DeepSeek V4 Pro text fallback, e.g.
 /// `<invoke name="shell"><parameter name="command">…</parameter></invoke>`
-/// optionally wrapped in `<tool_calls>`. Legacy parse aid only — not a
-/// product format and not advertised in `known_dialects`.
+/// optionally wrapped in `<tool_calls>`. Legacy parse aid (format.yaml `tag: invoke`);
+/// not a product format. Parsed on any lenient text path (not vendor-gated).
+/// Provider `known_dialects` records live evidence only.
 fn bare_invoke_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
@@ -1046,7 +1047,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
              关键规则：\n\
              - 开闭标签必须都是 </tool_call>（禁止混用其它闭标签）。\n\
              - JSON 必须包含 \"name\"（字符串）和 \"arguments\"（对象）；禁止扁平 {{\"name\",\"command\"}}。\n\
-             - 禁止 <shell>、<bash>、<function>、以及任何含 {dsml_ban} 的 DSML 标记（WILL BE IGNORED）。\n\
+             - 禁止 <shell>、<bash>、<function>、<invoke>、<parameter>、以及任何含 {dsml_ban} 的 DSML 标记。\n\
              - 禁止外包 <tool_calls> 或其它包装标签。\n\n\
              可用工具：\n{tool_list}"
         ),
@@ -1059,8 +1060,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
              - Open and close tags must both be tool_call (no mismatched closes).\n\
              - JSON must contain \"name\" (string) and \"arguments\" (object). \
                Do NOT flatten args as {{\"name\",\"command\"}}.\n\
-             - NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup. \
-               These formats WILL BE IGNORED.\n\
+             - NEVER use <shell>, <bash>, <function>, <invoke>, <parameter>, or any {dsml_ban} DSML markup.\n\
              - Do NOT wrap in <tool_calls> or any other tag.\n\n\
              Available tools:\n{tool_list}"
         ),
@@ -1068,7 +1068,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
             "## 工具调用协议 — 示例\n\n\
              优先使用 API 原生 tool_calls。文本回退示例（必须逐字遵守）：\n\
              <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
-             关键：禁止 <shell>/<bash>/<function>，禁止任何 {dsml_ban} DSML 标记（WILL BE IGNORED）；\
+             关键：禁止 <shell>/<bash>/<function>/<invoke>/<parameter>，禁止任何 {dsml_ban} DSML 标记；\
              JSON 必须含 \"name\" 与 \"arguments\" 对象。\n\n\
              可用工具：\n{tool_list}"
         ),
@@ -1076,8 +1076,7 @@ fn generate_prompt_instructions(tools: &[ToolDefinition], config: &TextToolConfi
             "## Tool Use Protocol — Example\n\n\
              Prefer native API tool_calls. Text fallback example (follow exactly):\n\
              <tool_call>\n{{\"name\": \"shell\", \"arguments\": {{\"command\": \"ls -la\"}}}}\n</tool_call>\n\n\
-             CRITICAL: NEVER use <shell>, <bash>, <function>, or any {dsml_ban} DSML markup — \
-             these formats WILL BE IGNORED. \
+             CRITICAL: NEVER use <shell>, <bash>, <function>, <invoke>, <parameter>, or any {dsml_ban} DSML markup. \
              JSON must include \"name\" and an \"arguments\" object.\n\n\
              Available tools:\n{tool_list}"
         ),
@@ -1384,6 +1383,11 @@ mod tests {
             prompt.contains("Prefer native API"),
             "L2 must steer toward native tool_calls"
         );
+        assert!(prompt.contains("<invoke>"), "L2 must forbid invoke XML");
+        assert!(
+            !prompt.contains("WILL BE IGNORED"),
+            "do not claim parse-aids are ignored"
+        );
     }
 
     #[test]
@@ -1405,6 +1409,8 @@ mod tests {
         assert!(prompt.contains("DSML") || prompt.contains('\u{FF5C}'));
         assert!(prompt.contains("Prefer native API"));
         assert!(prompt.contains("example") || prompt.contains("Example"));
+        assert!(prompt.contains("<invoke>"));
+        assert!(!prompt.contains("WILL BE IGNORED"));
     }
 
     #[test]
@@ -1452,6 +1458,7 @@ mod tests {
         let corrective = tool_format_recovery_message(ToolFormatRecoveryStrategy::CorrectivePrompt);
         assert!(corrective.contains("<tool_call>"));
         assert!(corrective.contains("arguments"));
+        assert!(corrective.contains("<invoke>"));
 
         let native = tool_format_recovery_message(ToolFormatRecoveryStrategy::NativeOnlyReask);
         assert!(native.contains("native"));
