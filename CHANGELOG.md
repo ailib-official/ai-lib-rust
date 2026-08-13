@@ -9,8 +9,8 @@ All notable changes to this project will be documented in this file.
 - **ALR-GEN-001 (Experimental)**: Generative capability facts on `ModelCapabilityFacts`
   (`image_generation` / `speech_to_text` / `text_to_speech`; omit = unknown) plus
   `ProtocolManifest::supports_generative_for_model` and request DTOs under
-  `types::generative` (no HTTP drivers). PROTO-PIN bumped to ai-protocol PT-GEN-001
-  (`f8c0bd5`).
+  `types::generative` (no HTTP drivers). PROTO-PIN follows ai-protocol tip
+  `954934d` (PT-GEN-001/002 + PT-TTC-012).
 
 ### Fixed
 
