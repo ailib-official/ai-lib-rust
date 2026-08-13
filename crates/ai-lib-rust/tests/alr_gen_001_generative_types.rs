@@ -33,9 +33,7 @@ metadata:
     assert!(!manifest.supports_generative_for_model("chat-only", "speech_to_text"));
     assert!(!manifest.supports_generative_for_model("missing-model", "image_generation"));
 
-    let entry = manifest
-        .metadata_model_entry("chat-only")
-        .expect("entry");
+    let entry = manifest.metadata_model_entry("chat-only").expect("entry");
     use ai_lib_rust::protocol::CapabilityKnown;
     assert_eq!(
         entry.supports_generative_capability("image_generation"),
