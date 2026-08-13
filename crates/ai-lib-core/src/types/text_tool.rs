@@ -334,6 +334,9 @@ fn looks_like_tool_markup_attempt(text: &str) -> bool {
     text.contains(DSML_TAG)
         || text.contains("<tool_call")
         || text.contains("<tool_calls")
+        || text.contains("<invoke")
+        || text.contains("</invoke>")
+        || text.contains("</parameter>")
         || text.contains("<shell>")
         || text.contains("<bash>")
         || text.contains("<function>")
@@ -699,6 +702,73 @@ fn parse_dsml_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
     (tool_calls, spans_to_remove)
 }
 
+/// Bare Anthropic-style invoke/parameter (no DSML prefix).
+///
+/// Observed from DeepSeek V4 Pro text fallback, e.g.
+/// `<invoke name="shell"><parameter name="command">…</parameter></invoke>`
+/// optionally wrapped in `<tool_calls>`. Legacy parse aid only — not a
+/// product format and not advertised in `known_dialects`.
+fn bare_invoke_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?s)<invoke\s+name="([^"]+)">(.*?)</invoke>"#)
+            .expect("valid bare invoke regex")
+    })
+}
+
+fn bare_parameter_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?s)<parameter\s+name="([^"]+)"[^>]*>(.*?)</parameter>"#)
+            .expect("valid bare parameter regex")
+    })
+}
+
+fn parse_bare_invoke_dialect(text: &str) -> (Vec<ToolCall>, Vec<(usize, usize)>) {
+    let mut tool_calls = Vec::new();
+    let mut spans_to_remove = Vec::new();
+    let param_re = bare_parameter_re();
+
+    for caps in bare_invoke_re().captures_iter(text) {
+        let full = caps.get(0).unwrap();
+        let tool_name = caps
+            .get(1)
+            .map(|m| m.as_str().trim())
+            .unwrap_or("")
+            .to_string();
+        if tool_name.is_empty() {
+            continue;
+        }
+
+        let body = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let mut arguments = serde_json::Map::new();
+        for param_caps in param_re.captures_iter(body) {
+            let key = param_caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let value = param_caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+            if !key.is_empty() {
+                arguments.insert(
+                    key.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+            }
+        }
+
+        if arguments.is_empty() {
+            continue;
+        }
+
+        let idx = tool_calls.len();
+        tool_calls.push(ToolCall {
+            id: format!("text_tool_{idx}"),
+            name: tool_name,
+            arguments: serde_json::Value::Object(arguments),
+        });
+        spans_to_remove.push((full.start(), full.end()));
+    }
+
+    (tool_calls, merge_spans(spans_to_remove))
+}
+
 fn unwrap_tool_calls_wrapper(text: &str) -> String {
     let outer_re = Regex::new(r"(?s)<tool_calls>\s*(.*?)\s*</tool_calls>").unwrap();
     if let Some(caps) = outer_re.captures(text) {
@@ -893,13 +963,19 @@ fn parse_text_tool_calls(text: &str, config: &TextToolConfig) -> (String, Vec<To
         if !dsml_calls.is_empty() {
             tool_calls.extend(dsml_calls);
             spans_to_remove.extend(dsml_spans);
-        } else if let Some((call, span)) = if !config.dialects.is_empty() {
-            try_parse_configured_dialects(&remaining, &config.dialects)
         } else {
-            try_parse_legacy_dialects(&remaining)
-        } {
-            tool_calls.push(call);
-            spans_to_remove.push(span);
+            let (invoke_calls, invoke_spans) = parse_bare_invoke_dialect(&remaining);
+            if !invoke_calls.is_empty() {
+                tool_calls.extend(invoke_calls);
+                spans_to_remove.extend(invoke_spans);
+            } else if let Some((call, span)) = if !config.dialects.is_empty() {
+                try_parse_configured_dialects(&remaining, &config.dialects)
+            } else {
+                try_parse_legacy_dialects(&remaining)
+            } {
+                tool_calls.push(call);
+                spans_to_remove.push(span);
+            }
         }
     }
 
@@ -1068,6 +1144,41 @@ mod tests {
         assert_eq!(remaining, "Running command:");
         assert_eq!(calls[0].name, "shell");
         assert_eq!(calls[0].arguments["command"], "ls");
+    }
+
+    #[test]
+    fn lenient_bare_invoke_parameter() {
+        let text = r#"<invoke name="shell">
+<parameter name="command">git --git-dir=/srv/git/repos/ai-lib-plans.git log --oneline -5 --all 2>&1 || echo 'LAN_GIT_UNREACHABLE'</parameter>
+</invoke>"#;
+        let (remaining, calls) = parser_lenient().parse(text);
+        assert!(remaining.is_empty());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert!(calls[0].arguments["command"]
+            .as_str()
+            .unwrap()
+            .contains("ai-lib-plans.git"));
+    }
+
+    #[test]
+    fn lenient_tool_calls_wrapper_around_bare_invoke() {
+        let text = r#"<tool_calls>
+<invoke name="shell">
+<parameter name="command">pwd</parameter>
+</invoke>
+</tool_calls>"#;
+        let (_, calls) = parser_lenient().parse(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+        assert_eq!(calls[0].arguments["command"], "pwd");
+    }
+
+    #[test]
+    fn inspect_flags_invoke_fragment_as_unparsed_markup() {
+        let junk = "]</parameter>\n</invoke>";
+        assert!(needs_tool_format_correction(junk, 0));
+        assert!(!needs_tool_format_correction(junk, 1));
     }
 
     #[test]

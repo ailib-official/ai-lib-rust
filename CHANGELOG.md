@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Lenient text-tool parse accepts bare Anthropic-style `<invoke>` / `<parameter>`
+  (DeepSeek V4 Pro fallback). Legacy parse aid only; not advertised as a product
+  format. Fragments such as `</invoke>` now classify as unparsed markup.
+
 ## 1.3.0 - 2026-08-07
 
 ### Milestone
