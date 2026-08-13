@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: ai-protocol git 954934d (PT-TTC-012; npm still 1.2.0)
+          # PROTO-PIN: ai-protocol git 954934d (PT-GEN-001/002 + PT-TTC-012; npm still 1.2.0)
           ref: 954934d46b1c5e82af044e8833f8a4fe2b5f255c
           path: ai-protocol
 
@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: ai-protocol git 954934d (PT-TTC-012; npm still 1.2.0)
+          # PROTO-PIN: ai-protocol git 954934d (PT-GEN-001/002 + PT-TTC-012; npm still 1.2.0)
           ref: 954934d46b1c5e82af044e8833f8a4fe2b5f255c
           path: ai-protocol
 
@@ -82,7 +82,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ailib-official/ai-protocol
-          # PROTO-PIN: ai-protocol git 954934d (PT-TTC-012; npm still 1.2.0)
+          # PROTO-PIN: ai-protocol git 954934d (PT-GEN-001/002 + PT-TTC-012; npm still 1.2.0)
           ref: 954934d46b1c5e82af044e8833f8a4fe2b5f255c
           path: ai-protocol
 

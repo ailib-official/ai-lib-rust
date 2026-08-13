@@ -1,4 +1,4 @@
-//! 从 `metadata.models` 读取 Experimental 模型级能力事实（ME-001 / ALR-ME-001）。
+//! 从 `metadata.models` 读取 Experimental 模型级能力事实（ME-001 / ALR-ME-001 / PT-GEN-001）。
 //!
 //! # Experimental model-level capability facts (ME-001)
 //!
@@ -6,6 +6,9 @@
 //! `modalities`. Omitted boolean fields mean **unknown** — never coerce to
 //! `false`. When known facts exist for a model id, prefer them over provider
 //! `capabilities.required` / `optional` advertisements.
+//!
+//! Generative keys (`image_generation` / `speech_to_text` / `text_to_speech`)
+//! are Experimental (PT-GEN-001 / ALR-GEN-001).
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -48,6 +51,15 @@ pub struct ModelCapabilityFacts {
     pub reasoning: Option<bool>,
     #[serde(default)]
     pub attachment: Option<bool>,
+    /// Text-to-image (or equivalent). Distinct from vision input (`attachment` / modalities).
+    #[serde(default)]
+    pub image_generation: Option<bool>,
+    /// Speech-to-text / transcription.
+    #[serde(default)]
+    pub speech_to_text: Option<bool>,
+    /// Text-to-speech synthesis.
+    #[serde(default)]
+    pub text_to_speech: Option<bool>,
 }
 
 /// Experimental per-model modalities.
@@ -99,6 +111,22 @@ impl MetadataModelEntry {
 
         CapabilityKnown::Unknown
     }
+
+    /// Experimental (PT-GEN-001): per-model generative capability fact.
+    ///
+    /// `key` is a protocol capability name: `image_generation`, `speech_to_text`,
+    /// or `text_to_speech`. Unknown keys and omitted fields → [`CapabilityKnown::Unknown`].
+    pub fn supports_generative_capability(&self, key: &str) -> CapabilityKnown {
+        let Some(caps) = self.model_capabilities.as_ref() else {
+            return CapabilityKnown::Unknown;
+        };
+        match key {
+            "image_generation" => CapabilityKnown::from_option(caps.image_generation),
+            "speech_to_text" => CapabilityKnown::from_option(caps.speech_to_text),
+            "text_to_speech" => CapabilityKnown::from_option(caps.text_to_speech),
+            _ => CapabilityKnown::Unknown,
+        }
+    }
 }
 
 /// Look up `metadata.models.<model_id>` from a flattened manifest `extra` map
@@ -132,6 +160,10 @@ mod tests {
             CapabilityKnown::Unknown
         );
         assert!(entry.model_capabilities.is_none());
+        assert_eq!(
+            entry.supports_generative_capability("image_generation"),
+            CapabilityKnown::Unknown
+        );
     }
 
     #[test]
@@ -154,6 +186,35 @@ mod tests {
         assert_eq!(
             CapabilityKnown::from_option(entry.model_capabilities.as_ref().unwrap().tool_call),
             CapabilityKnown::Yes
+        );
+    }
+
+    #[test]
+    fn generative_keys_omit_is_unknown_present_is_yes() {
+        let omit = MetadataModelEntry::from_value(&json!({
+            "model_capabilities": { "tool_call": true }
+        }))
+        .expect("parse");
+        assert_eq!(
+            omit.supports_generative_capability("image_generation"),
+            CapabilityKnown::Unknown
+        );
+        assert_eq!(
+            omit.supports_generative_capability("speech_to_text"),
+            CapabilityKnown::Unknown
+        );
+
+        let img = MetadataModelEntry::from_value(&json!({
+            "model_capabilities": { "image_generation": true }
+        }))
+        .expect("parse");
+        assert_eq!(
+            img.supports_generative_capability("image_generation"),
+            CapabilityKnown::Yes
+        );
+        assert_eq!(
+            img.supports_generative_capability("text_to_speech"),
+            CapabilityKnown::Unknown
         );
     }
 

@@ -153,6 +153,22 @@ impl ProtocolManifest {
         known.or_provider(provider)
     }
 
+    /// Experimental (PT-GEN-001 / ALR-GEN-001): generative capability for a model id.
+    ///
+    /// Prefer `metadata.models.<id>.model_capabilities.<key>` when known.
+    /// When unknown/omitted, fail closed (`false`) — provider optional ads for
+    /// `image_generation` / `stt` / `tts` are not yet projected onto
+    /// [`Capabilities`](crate::protocol::config::Capabilities) booleans.
+    ///
+    /// `key`: `image_generation` | `speech_to_text` | `text_to_speech`.
+    pub fn supports_generative_for_model(&self, model_id: &str, key: &str) -> bool {
+        let known = self
+            .metadata_model_entry(model_id)
+            .map(|e| e.supports_generative_capability(key))
+            .unwrap_or(CapabilityKnown::Unknown);
+        known.or_provider(false)
+    }
+
     /// Get base URL from endpoint definition
     pub fn get_base_url(&self) -> &str {
         &self.endpoint.base_url
