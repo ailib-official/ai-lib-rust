@@ -20,7 +20,7 @@
 
 已发布到 [crates.io](https://crates.io/crates/ai-lib-rust)：**`ai-lib-core`**、**`ai-lib-contact`**、**`ai-lib-rust`**（均为 **1.3.0**）。`ai-lib-wasm` 面向 `wasm32-wasip1` 构建，不发布。
 
-> **钉版本：** 优先 crates.io **1.3.0**（标签 `v1.3.0`）。CI 钉住 `ai-protocol` **v1.2.0**。见 [CHANGELOG](CHANGELOG.md)。
+> **钉版本：** 优先 crates.io **1.3.0**（标签 `v1.3.0`）。CI PROTO-PIN 为 ai-protocol git `954934d`（PT-TTC-012；npm 仍为 **v1.2.0**）。见 [CHANGELOG](CHANGELOG.md)。
 
 ## 快速开始
 
