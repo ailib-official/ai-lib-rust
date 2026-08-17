@@ -416,7 +416,15 @@ impl<'a> ChatRequestBuilder<'a> {
                 StreamingEvent::StreamEnd { .. } => {
                     break;
                 }
-                StreamingEvent::ThinkingDelta { .. } => {}
+                StreamingEvent::ThinkingDelta { thinking, .. } => {
+                    if !thinking.is_empty() {
+                        if !response.thinking.is_empty() {
+                            response.thinking.push_str(&thinking);
+                        } else {
+                            response.thinking = thinking;
+                        }
+                    }
+                }
                 other => {
                     // Log unexpected events for debugging
                     tracing::warn!("Unexpected event in execute(): {:?}", other);

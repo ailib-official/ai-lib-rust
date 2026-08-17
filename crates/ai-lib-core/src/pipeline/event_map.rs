@@ -113,15 +113,9 @@ impl RuleBasedEventMapper {
                         thinking = crate::utils::PathMapper::get_string(frame, p);
                     }
                 }
-                let thinking = thinking.or_else(|| {
-                    crate::utils::PathMapper::get_string(
-                        frame,
-                        "$.choices[0].delta.reasoning_content",
-                    )
-                })?;
-                if thinking.is_empty() {
-                    return None;
-                }
+                let thinking = thinking
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| crate::utils::thinking_from_openai_compat_delta(frame))?;
                 Some(StreamingEvent::ThinkingDelta {
                     thinking,
                     tool_consideration: None,
@@ -271,6 +265,19 @@ impl Mapper for OpenAiStyleEventMapper {
             while let Some(item) = input.next().await {
                 match item {
                     Ok(frame) => {
+                        // Prefer structured thinking over content (ALR-RSN-001).
+                        if let Some(thinking) =
+                            crate::utils::thinking_from_openai_compat_delta(&frame)
+                        {
+                            return Some((
+                                Ok(StreamingEvent::ThinkingDelta {
+                                    thinking,
+                                    tool_consideration: None,
+                                }),
+                                (input, ended),
+                            ));
+                        }
+
                         // content delta
                         if let Some(content) = crate::utils::PathMapper::get_string(
                             &frame,
@@ -281,21 +288,6 @@ impl Mapper for OpenAiStyleEventMapper {
                                     Ok(StreamingEvent::PartialContentDelta {
                                         content,
                                         sequence_id: None,
-                                    }),
-                                    (input, ended),
-                                ));
-                            }
-                        }
-
-                        if let Some(thinking) = crate::utils::PathMapper::get_string(
-                            &frame,
-                            "$.choices[0].delta.reasoning_content",
-                        ) {
-                            if !thinking.is_empty() {
-                                return Some((
-                                    Ok(StreamingEvent::ThinkingDelta {
-                                        thinking,
-                                        tool_consideration: None,
                                     }),
                                     (input, ended),
                                 ));
@@ -502,6 +494,16 @@ impl Mapper for PathEventMapper {
                     while let Some(item) = input.next().await {
                         match item {
                             Ok(frame) => {
+                                // Prefer structured thinking before content when both appear (ALR-RSN-001).
+                                if let Some(thinking) =
+                                    crate::utils::thinking_from_openai_compat_delta(&frame)
+                                {
+                                    q.push_back(StreamingEvent::ThinkingDelta {
+                                        thinking,
+                                        tool_consideration: None,
+                                    });
+                                }
+
                                 // content delta
                                 if let Some(content) = crate::utils::PathMapper::get_string(
                                     &frame,
@@ -598,18 +600,6 @@ impl Mapper for PathEventMapper {
                                                 });
                                             }
                                         }
-                                    }
-                                }
-
-                                if let Some(thinking) = crate::utils::PathMapper::get_string(
-                                    &frame,
-                                    "$.choices[0].delta.reasoning_content",
-                                ) {
-                                    if !thinking.is_empty() {
-                                        q.push_back(StreamingEvent::ThinkingDelta {
-                                            thinking,
-                                            tool_consideration: None,
-                                        });
                                     }
                                 }
 

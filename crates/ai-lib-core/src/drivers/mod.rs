@@ -42,6 +42,8 @@ pub struct DriverRequest {
 pub struct DriverResponse {
     /// Extracted text content.
     pub content: Option<String>,
+    /// Extended thinking / reasoning text when present (not user-facing answer).
+    pub thinking: Option<String>,
     /// Finish reason normalized to AI-Protocol standard.
     pub finish_reason: Option<String>,
     /// Token usage statistics.
@@ -264,6 +266,7 @@ impl ProviderDriver for OpenAiDriver {
             .pointer("/choices/0/message/content")
             .and_then(|v| v.as_str())
             .map(String::from);
+        let thinking = crate::utils::thinking_from_openai_compat_message(body);
         let finish_reason = body
             .pointer("/choices/0/finish_reason")
             .and_then(|v| v.as_str())
@@ -277,6 +280,7 @@ impl ProviderDriver for OpenAiDriver {
 
         Ok(DriverResponse {
             content,
+            thinking,
             finish_reason,
             usage,
             tool_calls,
@@ -295,6 +299,14 @@ impl ProviderDriver for OpenAiDriver {
             )))
         })?;
 
+        // Prefer structured reasoning fields over content (ALR-RSN-001 / GOV-007).
+        if let Some(thinking) = crate::utils::thinking_from_openai_compat_delta(&v) {
+            return Ok(Some(StreamingEvent::ThinkingDelta {
+                thinking,
+                tool_consideration: None,
+            }));
+        }
+
         // Content delta
         if let Some(content) = v
             .pointer("/choices/0/delta/content")
@@ -304,32 +316,6 @@ impl ProviderDriver for OpenAiDriver {
                 return Ok(Some(StreamingEvent::PartialContentDelta {
                     content: content.to_string(),
                     sequence_id: None,
-                }));
-            }
-        }
-
-        // Reasoning / extended thinking (OpenAI-compatible `reasoning_content` delta)
-        if let Some(thinking) = v
-            .pointer("/choices/0/delta/reasoning_content")
-            .and_then(|c| c.as_str())
-        {
-            if !thinking.is_empty() {
-                return Ok(Some(StreamingEvent::ThinkingDelta {
-                    thinking: thinking.to_string(),
-                    tool_consideration: None,
-                }));
-            }
-        }
-
-        // o-series / `reasoning` field (alias used by some OpenAI-compatible proxies)
-        if let Some(thinking) = v
-            .pointer("/choices/0/delta/reasoning")
-            .and_then(|c| c.as_str())
-        {
-            if !thinking.is_empty() {
-                return Ok(Some(StreamingEvent::ThinkingDelta {
-                    thinking: thinking.to_string(),
-                    tool_consideration: None,
                 }));
             }
         }
@@ -437,16 +423,33 @@ mod tests {
     }
 
     #[test]
-    fn test_openai_driver_parse_stream_reasoning_field_alias() {
+    fn test_openai_driver_parse_stream_thinking_alias_before_content() {
         let driver = OpenAiDriver::new("openai", vec![]);
-        let data = r#"{"choices":[{"delta":{"reasoning":"alias..."}}]}"#;
+        // Same frame: thinking key must win over content (ALR-RSN-001).
+        let data = r#"{"choices":[{"delta":{"thinking":"plan","content":"answer"}}]}"#;
         let event = driver.parse_stream_event(data).unwrap();
         match event {
             Some(StreamingEvent::ThinkingDelta { thinking, .. }) => {
-                assert_eq!(thinking, "alias...");
+                assert_eq!(thinking, "plan");
             }
             _ => panic!("Expected ThinkingDelta, got {:?}", event),
         }
+    }
+
+    #[test]
+    fn test_openai_driver_parse_response_keeps_thinking_separate() {
+        let driver = OpenAiDriver::new("openai", vec![]);
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {"content": "", "reasoning_content": "only think"},
+                "finish_reason": "stop"
+            }]
+        });
+        let resp = driver.parse_response(&body).unwrap();
+        assert!(
+            resp.content.as_deref().unwrap_or("").is_empty() || resp.content.as_deref() == Some("")
+        );
+        assert_eq!(resp.thinking.as_deref(), Some("only think"));
     }
 
     /// Unified `usage` object may carry Anthropic-style keys inside an OpenAI `choices[0].*` envelope.

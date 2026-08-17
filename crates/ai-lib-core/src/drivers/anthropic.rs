@@ -150,10 +150,42 @@ impl ProviderDriver for AnthropicDriver {
 
     fn parse_response(&self, body: &Value) -> Result<DriverResponse, Error> {
         // Anthropic response: { content: [{type: "text", text: "..."}], stop_reason, usage }
-        let content = body
-            .pointer("/content/0/text")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let mut content: Option<String> = None;
+        let mut thinking_parts: Vec<String> = Vec::new();
+        if let Some(arr) = body.get("content").and_then(|c| c.as_array()) {
+            let mut text_parts: Vec<&str> = Vec::new();
+            for block in arr {
+                match block.get("type").and_then(|t| t.as_str()) {
+                    Some("text") => {
+                        if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                            text_parts.push(t);
+                        }
+                    }
+                    Some("thinking") => {
+                        if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
+                            if !t.is_empty() {
+                                thinking_parts.push(t.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !text_parts.is_empty() {
+                content = Some(text_parts.join("\n"));
+            }
+        }
+        if content.is_none() {
+            content = body
+                .pointer("/content/0/text")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+        }
+        let thinking = if thinking_parts.is_empty() {
+            None
+        } else {
+            Some(thinking_parts.join("\n\n"))
+        };
 
         // Normalize stop_reason → finish_reason
         let finish_reason = body
@@ -192,6 +224,7 @@ impl ProviderDriver for AnthropicDriver {
 
         Ok(DriverResponse {
             content,
+            thinking,
             finish_reason,
             usage,
             tool_calls,

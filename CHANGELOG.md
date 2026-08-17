@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **ALR-RSN-001**: Structured thinking channel — `UnifiedResponse.thinking` and
+  `DriverResponse.thinking`; OpenAI-compat delta/message aliases
+  (`reasoning_content` / `reasoning` / `thinking` / `thought` / `reasoning_text` /
+  `analysis`) via shared `utils::thinking_extract` (GOV-007 single entry). Stream
+  aggregate and `ChatRequestBuilder::execute()` preserve `ThinkingDelta`. Anthropic
+  non-stream extracts `type=thinking` blocks.
 - **ALR-GEN-002 (Experimental)**: Manifest L-Exec drivers under `generative`
   (`ImageGenerationClient` / `SpeechToTextClient` / `TextToSpeechClient`) gated by
   `supports_generative_for_model`; paths from `endpoints.<key>`; OpenAI + DashScope
@@ -24,6 +30,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **ALR-RSN-001**: Non-stream responses no longer copy `reasoning_content` into
+  `content` when answer content is empty — reasoning stays on `thinking`.
 - **ALR-TTC-012**: L2/L3 and recovery prompts forbid `<invoke>`/`<parameter>` and
   no longer claim those formats "WILL BE IGNORED" (lenient parse still executes
   well-formed aids). Parse remains global on the lenient path, not vendor-gated.
