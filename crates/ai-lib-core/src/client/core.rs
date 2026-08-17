@@ -38,6 +38,9 @@ pub struct AiClient {
 #[derive(Debug, Default)]
 pub struct UnifiedResponse {
     pub content: String,
+    /// Aggregated extended thinking / reasoning (ALR-RSN-001). Empty when absent.
+    /// Additive field — does not change `content` semantics.
+    pub thinking: String,
     pub tool_calls: Vec<crate::types::tool::ToolCall>,
     pub usage: Option<serde_json::Value>,
 }

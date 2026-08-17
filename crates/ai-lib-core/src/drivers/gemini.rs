@@ -196,6 +196,7 @@ impl ProviderDriver for GeminiDriver {
 
         Ok(DriverResponse {
             content,
+            thinking: None,
             finish_reason,
             usage,
             tool_calls,

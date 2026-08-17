@@ -126,12 +126,17 @@ impl AiClient {
             }
         }
 
-        if response.content.is_empty() {
-            for path in self.nonstream_reasoning_paths() {
-                if let Some(content) = crate::utils::json_path::PathMapper::get_string(json, path) {
-                    if !content.is_empty() {
-                        response.content = content;
-                        break;
+        // Structured reasoning stays in `thinking` — never promote into `content` (ALR-RSN-001).
+        if response.thinking.is_empty() {
+            if let Some(t) = crate::utils::thinking_from_openai_compat_message(json) {
+                response.thinking = t;
+            } else {
+                for path in self.nonstream_reasoning_paths() {
+                    if let Some(t) = crate::utils::json_path::PathMapper::get_string(json, path) {
+                        if !t.is_empty() {
+                            response.thinking = t;
+                            break;
+                        }
                     }
                 }
             }
@@ -536,6 +541,15 @@ impl AiClient {
             match event? {
                 StreamingEvent::PartialContentDelta { content, .. } => {
                     response.content.push_str(&content);
+                }
+                StreamingEvent::ThinkingDelta { thinking, .. } => {
+                    if !thinking.is_empty() {
+                        if !response.thinking.is_empty() {
+                            response.thinking.push_str(&thinking);
+                        } else {
+                            response.thinking = thinking;
+                        }
+                    }
                 }
                 StreamingEvent::ToolCallStarted {
                     tool_call_id,
