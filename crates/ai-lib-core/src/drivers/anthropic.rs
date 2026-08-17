@@ -232,9 +232,9 @@ impl ProviderDriver for AnthropicDriver {
         })
     }
 
-    fn parse_stream_event(&self, data: &str) -> Result<Option<StreamingEvent>, Error> {
+    fn parse_stream_event(&self, data: &str) -> Result<Vec<StreamingEvent>, Error> {
         if data.trim().is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         let v: Value = serde_json::from_str(data).map_err(|e| {
@@ -250,18 +250,18 @@ impl ProviderDriver for AnthropicDriver {
             "content_block_delta" => {
                 if let Some(text) = v.pointer("/delta/text").and_then(|t| t.as_str()) {
                     if !text.is_empty() {
-                        return Ok(Some(StreamingEvent::PartialContentDelta {
+                        return Ok(vec![StreamingEvent::PartialContentDelta {
                             content: text.to_string(),
                             sequence_id: v.get("index").and_then(|i| i.as_u64()),
-                        }));
+                        }]);
                     }
                 }
                 // Thinking delta support
                 if let Some(thinking) = v.pointer("/delta/thinking").and_then(|t| t.as_str()) {
-                    return Ok(Some(StreamingEvent::ThinkingDelta {
+                    return Ok(vec![StreamingEvent::ThinkingDelta {
                         thinking: thinking.to_string(),
                         tool_consideration: None,
-                    }));
+                    }]);
                 }
                 // Tool arguments streaming (partial JSON)
                 if v.pointer("/delta/type").and_then(|t| t.as_str()) == Some("input_json_delta") {
@@ -269,39 +269,39 @@ impl ProviderDriver for AnthropicDriver {
                         .pointer("/delta/partial_json")
                         .and_then(|t| t.as_str())
                         .unwrap_or("");
-                    return Ok(Some(StreamingEvent::PartialToolCall {
+                    return Ok(vec![StreamingEvent::PartialToolCall {
                         tool_call_id: String::new(),
                         arguments: partial.to_string(),
                         index: v.get("index").and_then(|i| i.as_u64()).map(|u| u as u32),
                         is_complete: None,
-                    }));
+                    }]);
                 }
-                Ok(None)
+                Ok(Vec::new())
             }
             "message_delta" => {
                 let reason = v.pointer("/delta/stop_reason").and_then(|r| r.as_str());
                 if let Some(r) = reason {
-                    return Ok(Some(StreamingEvent::StreamEnd {
+                    return Ok(vec![StreamingEvent::StreamEnd {
                         finish_reason: Some(match r {
                             "end_turn" => "stop".to_string(),
                             "max_tokens" => "length".to_string(),
                             other => other.to_string(),
                         }),
-                    }));
+                    }]);
                 }
-                Ok(None)
+                Ok(Vec::new())
             }
-            "message_stop" => Ok(Some(StreamingEvent::StreamEnd {
+            "message_stop" => Ok(vec![StreamingEvent::StreamEnd {
                 finish_reason: Some("stop".into()),
-            })),
+            }]),
             "error" => {
                 let error = v.get("error").cloned().unwrap_or(Value::Null);
-                Ok(Some(StreamingEvent::StreamError {
+                Ok(vec![StreamingEvent::StreamError {
                     error,
                     event_id: None,
-                }))
+                }])
             }
-            _ => Ok(None),
+            _ => Ok(Vec::new()),
         }
     }
 
@@ -367,9 +367,10 @@ mod tests {
         let driver = AnthropicDriver::new("anthropic", vec![]);
         let data =
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::PartialContentDelta { content, .. }) => {
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamingEvent::PartialContentDelta { content, .. } => {
                 assert_eq!(content, "Hi");
             }
             _ => panic!("Expected PartialContentDelta"),
@@ -392,15 +393,16 @@ mod tests {
     fn test_anthropic_parse_stream_input_json_delta() {
         let driver = AnthropicDriver::new("anthropic", vec![]);
         let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::PartialToolCall {
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamingEvent::PartialToolCall {
                 arguments, index, ..
-            }) => {
+            } => {
                 assert_eq!(arguments, r#"{"a":"#);
-                assert_eq!(index, Some(0));
+                assert_eq!(*index, Some(0));
             }
-            _ => panic!("Expected PartialToolCall, got {:?}", event),
+            other => panic!("Expected PartialToolCall, got {:?}", other),
         }
     }
 

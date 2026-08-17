@@ -112,8 +112,11 @@ pub trait ProviderDriver: Send + Sync + std::fmt::Debug {
     /// Parse a non-streaming response into unified format.
     fn parse_response(&self, body: &Value) -> Result<DriverResponse, Error>;
 
-    /// Parse a single streaming event from raw SSE/NDJSON data.
-    fn parse_stream_event(&self, data: &str) -> Result<Option<StreamingEvent>, Error>;
+    /// Parse a single streaming SSE/NDJSON frame into zero or more unified events.
+    ///
+    /// A frame may carry both thinking and content (OpenAI-compat reasoners). Callers
+    /// MUST drain the full `Vec` — do not assume at most one event (ALR-RSN-001).
+    fn parse_stream_event(&self, data: &str) -> Result<Vec<StreamingEvent>, Error>;
 
     /// Get the list of capabilities this driver supports.
     fn supported_capabilities(&self) -> &[Capability];
@@ -288,9 +291,9 @@ impl ProviderDriver for OpenAiDriver {
         })
     }
 
-    fn parse_stream_event(&self, data: &str) -> Result<Option<StreamingEvent>, Error> {
+    fn parse_stream_event(&self, data: &str) -> Result<Vec<StreamingEvent>, Error> {
         if data.trim().is_empty() || self.is_stream_done(data) {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let v: Value = serde_json::from_str(data).map_err(|e| {
             Error::Protocol(ProtocolError::ValidationError(format!(
@@ -299,38 +302,40 @@ impl ProviderDriver for OpenAiDriver {
             )))
         })?;
 
-        // Prefer structured reasoning fields over content (ALR-RSN-001 / GOV-007).
+        let mut out = Vec::new();
+
+        // Thinking first when co-present with content (order only — never drop content).
         if let Some(thinking) = crate::utils::thinking_from_openai_compat_delta(&v) {
-            return Ok(Some(StreamingEvent::ThinkingDelta {
+            out.push(StreamingEvent::ThinkingDelta {
                 thinking,
                 tool_consideration: None,
-            }));
+            });
         }
 
-        // Content delta
         if let Some(content) = v
             .pointer("/choices/0/delta/content")
             .and_then(|c| c.as_str())
         {
             if !content.is_empty() {
-                return Ok(Some(StreamingEvent::PartialContentDelta {
+                out.push(StreamingEvent::PartialContentDelta {
                     content: content.to_string(),
                     sequence_id: None,
-                }));
+                });
             }
         }
 
-        // Finish reason
-        if let Some(reason) = v
-            .pointer("/choices/0/finish_reason")
-            .and_then(|r| r.as_str())
-        {
-            return Ok(Some(StreamingEvent::StreamEnd {
-                finish_reason: Some(reason.to_string()),
-            }));
+        if out.is_empty() {
+            if let Some(reason) = v
+                .pointer("/choices/0/finish_reason")
+                .and_then(|r| r.as_str())
+            {
+                out.push(StreamingEvent::StreamEnd {
+                    finish_reason: Some(reason.to_string()),
+                });
+            }
         }
 
-        Ok(None)
+        Ok(out)
     }
 
     fn supported_capabilities(&self) -> &[Capability] {
@@ -413,26 +418,30 @@ mod tests {
     fn test_openai_driver_parse_stream_reasoning_delta() {
         let driver = OpenAiDriver::new("openai", vec![]);
         let data = r#"{"choices":[{"delta":{"reasoning_content":"Let me think..."},"index":0}]}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::ThinkingDelta { thinking, .. }) => {
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamingEvent::ThinkingDelta { thinking, .. } => {
                 assert_eq!(thinking, "Let me think...");
             }
-            _ => panic!("Expected ThinkingDelta, got {:?}", event),
+            other => panic!("Expected ThinkingDelta, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_openai_driver_parse_stream_thinking_alias_before_content() {
+    fn test_openai_driver_parse_stream_same_frame_keeps_both() {
         let driver = OpenAiDriver::new("openai", vec![]);
-        // Same frame: thinking key must win over content (ALR-RSN-001).
+        // Same frame: thinking first, content must not be dropped (Spider / ALR-RSN-001).
         let data = r#"{"choices":[{"delta":{"thinking":"plan","content":"answer"}}]}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::ThinkingDelta { thinking, .. }) => {
-                assert_eq!(thinking, "plan");
-            }
-            _ => panic!("Expected ThinkingDelta, got {:?}", event),
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 2);
+        match &events[0] {
+            StreamingEvent::ThinkingDelta { thinking, .. } => assert_eq!(thinking, "plan"),
+            other => panic!("expected ThinkingDelta first, got {:?}", other),
+        }
+        match &events[1] {
+            StreamingEvent::PartialContentDelta { content, .. } => assert_eq!(content, "answer"),
+            other => panic!("expected PartialContentDelta second, got {:?}", other),
         }
     }
 
@@ -478,9 +487,10 @@ mod tests {
     fn test_openai_driver_parse_stream() {
         let driver = OpenAiDriver::new("openai", vec![]);
         let data = r#"{"choices":[{"delta":{"content":"Hello"},"index":0}]}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::PartialContentDelta { content, .. }) => {
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamingEvent::PartialContentDelta { content, .. } => {
                 assert_eq!(content, "Hello");
             }
             _ => panic!("Expected PartialContentDelta"),

@@ -204,9 +204,9 @@ impl ProviderDriver for GeminiDriver {
         })
     }
 
-    fn parse_stream_event(&self, data: &str) -> Result<Option<StreamingEvent>, Error> {
+    fn parse_stream_event(&self, data: &str) -> Result<Vec<StreamingEvent>, Error> {
         if data.trim().is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
 
         // Gemini streaming returns NDJSON — each line is a full generateContent response
@@ -219,10 +219,10 @@ impl ProviderDriver for GeminiDriver {
 
         // Check for error
         if let Some(error) = v.get("error") {
-            return Ok(Some(StreamingEvent::StreamError {
+            return Ok(vec![StreamingEvent::StreamError {
                 error: error.clone(),
                 event_id: None,
-            }));
+            }]);
         }
 
         // Content delta
@@ -231,10 +231,10 @@ impl ProviderDriver for GeminiDriver {
             .and_then(|t| t.as_str())
         {
             if !text.is_empty() {
-                return Ok(Some(StreamingEvent::PartialContentDelta {
+                return Ok(vec![StreamingEvent::PartialContentDelta {
                     content: text.to_string(),
                     sequence_id: None,
-                }));
+                }]);
             }
         }
 
@@ -244,17 +244,17 @@ impl ProviderDriver for GeminiDriver {
             .and_then(|r| r.as_str())
         {
             if reason != "STOP" || v.pointer("/candidates/0/content/parts/0/text").is_none() {
-                return Ok(Some(StreamingEvent::StreamEnd {
+                return Ok(vec![StreamingEvent::StreamEnd {
                     finish_reason: Some(match reason {
                         "STOP" => "stop".to_string(),
                         "MAX_TOKENS" => "length".to_string(),
                         other => other.to_lowercase(),
                     }),
-                }));
+                }]);
             }
         }
 
-        Ok(None)
+        Ok(Vec::new())
     }
 
     fn supported_capabilities(&self) -> &[Capability] {
@@ -344,9 +344,10 @@ mod tests {
     fn test_gemini_parse_stream_delta() {
         let driver = GeminiDriver::new("google", vec![]);
         let data = r#"{"candidates":[{"content":{"parts":[{"text":"World"}],"role":"model"}}]}"#;
-        let event = driver.parse_stream_event(data).unwrap();
-        match event {
-            Some(StreamingEvent::PartialContentDelta { content, .. }) => {
+        let events = driver.parse_stream_event(data).unwrap();
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamingEvent::PartialContentDelta { content, .. } => {
                 assert_eq!(content, "World");
             }
             _ => panic!("Expected PartialContentDelta"),
