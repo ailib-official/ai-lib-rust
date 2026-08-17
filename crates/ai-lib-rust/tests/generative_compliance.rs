@@ -153,8 +153,9 @@ fn gen006_anthropic_thinking_delta_from_driver() {
     let driver = AnthropicDriver::new("anthropic", vec![]);
     let data = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me analyze..."}}"#;
     let ev = driver.parse_stream_event(data).expect("parse");
-    match ev {
-        Some(StreamingEvent::ThinkingDelta { thinking, .. }) => {
+    assert_eq!(ev.len(), 1);
+    match &ev[0] {
+        StreamingEvent::ThinkingDelta { thinking, .. } => {
             assert!(thinking.contains("Let me analyze"));
         }
         other => panic!("expected ThinkingDelta, got {:?}", other),

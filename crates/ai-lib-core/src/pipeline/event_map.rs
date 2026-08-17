@@ -257,85 +257,81 @@ impl Mapper for OpenAiStyleEventMapper {
         &self,
         input: BoxStream<'static, Value>,
     ) -> PipeResult<BoxStream<'static, StreamingEvent>> {
-        let stream = stream::unfold((input, false), move |(mut input, mut ended)| async move {
-            if ended {
-                return None;
-            }
+        let stream = stream::unfold(
+            (input, VecDeque::<StreamingEvent>::new(), false),
+            move |(mut input, mut q, mut ended)| async move {
+                if let Some(ev) = q.pop_front() {
+                    return Some((Ok(ev), (input, q, ended)));
+                }
+                if ended {
+                    return None;
+                }
 
-            while let Some(item) = input.next().await {
-                match item {
-                    Ok(frame) => {
-                        // Prefer structured thinking over content (ALR-RSN-001).
-                        if let Some(thinking) =
-                            crate::utils::thinking_from_openai_compat_delta(&frame)
-                        {
-                            return Some((
-                                Ok(StreamingEvent::ThinkingDelta {
+                while let Some(item) = input.next().await {
+                    match item {
+                        Ok(frame) => {
+                            // Same frame may carry thinking + content — enqueue both
+                            // (thinking first); never drop content (ALR-RSN-001 / Spider).
+                            if let Some(thinking) =
+                                crate::utils::thinking_from_openai_compat_delta(&frame)
+                            {
+                                q.push_back(StreamingEvent::ThinkingDelta {
                                     thinking,
                                     tool_consideration: None,
-                                }),
-                                (input, ended),
-                            ));
-                        }
+                                });
+                            }
 
-                        // content delta
-                        if let Some(content) = crate::utils::PathMapper::get_string(
-                            &frame,
-                            "$.choices[0].delta.content",
-                        ) {
-                            if !content.is_empty() {
-                                return Some((
-                                    Ok(StreamingEvent::PartialContentDelta {
+                            if let Some(content) = crate::utils::PathMapper::get_string(
+                                &frame,
+                                "$.choices[0].delta.content",
+                            ) {
+                                if !content.is_empty() {
+                                    q.push_back(StreamingEvent::PartialContentDelta {
                                         content,
                                         sequence_id: None,
-                                    }),
-                                    (input, ended),
-                                ));
+                                    });
+                                }
                             }
-                        }
 
-                        // usage metadata (rare in streaming but possible)
-                        if let Some(usage) =
-                            crate::utils::PathMapper::get_path(&frame, "$.usage").cloned()
-                        {
-                            return Some((
-                                Ok(StreamingEvent::Metadata {
+                            if let Some(usage) =
+                                crate::utils::PathMapper::get_path(&frame, "$.usage").cloned()
+                            {
+                                q.push_back(StreamingEvent::Metadata {
                                     usage: Some(usage),
                                     finish_reason: None,
                                     stop_reason: None,
-                                }),
-                                (input, ended),
-                            ));
-                        }
-
-                        if let Some(reason) = crate::utils::PathMapper::get_string(
-                            &frame,
-                            "$.choices[0].finish_reason",
-                        ) {
-                            if !reason.is_empty() {
-                                return Some((
-                                    Ok(StreamingEvent::StreamEnd {
-                                        finish_reason: Some(reason),
-                                    }),
-                                    (input, ended),
-                                ));
+                                });
                             }
+
+                            if let Some(reason) = crate::utils::PathMapper::get_string(
+                                &frame,
+                                "$.choices[0].finish_reason",
+                            ) {
+                                if !reason.is_empty() {
+                                    q.push_back(StreamingEvent::StreamEnd {
+                                        finish_reason: Some(reason),
+                                    });
+                                }
+                            }
+
+                            if let Some(ev) = q.pop_front() {
+                                return Some((Ok(ev), (input, q, ended)));
+                            }
+                            continue;
                         }
-
-                        continue;
+                        Err(e) => return Some((Err(e), (input, q, ended))),
                     }
-                    Err(e) => return Some((Err(e), (input, ended))),
                 }
-            }
 
-            ended = true;
-            Some((
-                Ok(StreamingEvent::StreamEnd {
-                    finish_reason: None,
-                }),
-                (input, ended),
-            ))
-        });
+                ended = true;
+                Some((
+                    Ok(StreamingEvent::StreamEnd {
+                        finish_reason: None,
+                    }),
+                    (input, q, ended),
+                ))
+            },
+        );
 
         Ok(Box::pin(stream))
     }
