@@ -11,7 +11,9 @@ All notable changes to this project will be documented in this file.
   (`reasoning_content` / `reasoning` / `thinking` / `thought` / `reasoning_text` /
   `analysis`) via shared `utils::thinking_extract` (GOV-007 single entry). Stream
   aggregate and `ChatRequestBuilder::execute()` preserve `ThinkingDelta`. Anthropic
-  non-stream extracts `type=thinking` blocks.
+  non-stream extracts `type=thinking` blocks. Same-frame thinking+content emits
+  **both** events (thinking first); `parse_stream_event` returns `Vec` so content
+  is never dropped.
 - **ALR-GEN-002 (Experimental)**: Manifest L-Exec drivers under `generative`
   (`ImageGenerationClient` / `SpeechToTextClient` / `TextToSpeechClient`) gated by
   `supports_generative_for_model`; paths from `endpoints.<key>`; OpenAI + DashScope
