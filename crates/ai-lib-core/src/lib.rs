@@ -72,6 +72,11 @@ pub use types::text_tool::{
     ToolFormatRecoveryStrategy,
 };
 
+/// Experimental opt-in content think-dialect helpers (ALR-RSN-002). Not Client default.
+pub use types::think_dialect::{
+    is_think_dialect_name, split_think_blocks, strip_think_dialects, ThinkSplit,
+};
+
 #[cfg(not(target_arch = "wasm32"))]
 use futures::Stream;
 #[cfg(not(target_arch = "wasm32"))]

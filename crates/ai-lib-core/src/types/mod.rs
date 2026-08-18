@@ -63,6 +63,8 @@ pub mod generative;
 pub mod manifest_encode;
 pub mod message;
 pub mod text_tool;
+/// Experimental opt-in think dialect splitter (ALR-RSN-002). Not Client default.
+pub mod think_dialect;
 pub mod tool;
 
 pub use content_encode::{encode_blocks_for_anthropic, encode_blocks_for_gemini};
@@ -74,4 +76,7 @@ pub use generative::{
 };
 pub use message::{Message, MessageRole};
 pub use text_tool::{PromptLevel, StandardTextToolParser, TextToolConfig, TextToolParser};
+pub use think_dialect::{
+    is_think_dialect_name, split_think_blocks, strip_think_dialects, ThinkSplit,
+};
 pub use tool::{ToolCall, ToolDefinition};

@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **ALR-RSN-002 (Experimental)**: Opt-in content think-dialect splitter
+  (`types::think_dialect` / `split_think_blocks` / `strip_think_dialects`). Mirrors
+  Eos `think_split.js` stems/tags/fences; **not** wired into Client hot path;
+  separate from `TextToolParser` (GOV-007).
 - **ALR-RSN-001**: Structured thinking channel — `UnifiedResponse.thinking` and
   `DriverResponse.thinking`; OpenAI-compat delta/message aliases
   (`reasoning_content` / `reasoning` / `thinking` / `thought` / `reasoning_text` /
