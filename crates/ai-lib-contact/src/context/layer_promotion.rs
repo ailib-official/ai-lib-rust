@@ -60,11 +60,7 @@ pub fn promote_soft_layers(chunks: &mut [MessageChunk], opts: SoftLayerPromotion
         let query = message_plain_text(&chunks[last_user].message);
         let query_tokens = normalized_tokens(&query);
         if !query_tokens.is_empty() {
-            promote_tool_overlap(
-                chunks,
-                &query_tokens,
-                opts.tool_token_overlap_min as usize,
-            );
+            promote_tool_overlap(chunks, &query_tokens, opts.tool_token_overlap_min as usize);
         }
     }
 }
@@ -99,9 +95,7 @@ fn promote_tool_overlap(
             continue;
         }
         let text = message_plain_text(&chunk.message);
-        let overlap = normalized_tokens(&text)
-            .intersection(query_tokens)
-            .count();
+        let overlap = normalized_tokens(&text).intersection(query_tokens).count();
         if overlap >= min_overlap {
             promote_background_to_relevant(chunk);
         }

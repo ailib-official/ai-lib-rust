@@ -18,5 +18,5 @@ pub use assembler::{AssembleOptions, AssembleReport, LayeredAssembleOptions, Mes
 pub use budget::{ContextBudget, ModelCapacity};
 pub use envelope::{AssembleStrategy, ContextLayer, MessageChunk};
 pub use error::AssembleError;
-pub use layer_promotion::{SoftLayerPromotionOptions, promote_soft_layers};
+pub use layer_promotion::{promote_soft_layers, SoftLayerPromotionOptions};
 pub use token_estimate::{estimate_message_tokens, estimate_tokens, CHARS_PER_TOKEN};

@@ -3,7 +3,7 @@ use ai_lib_core::types::message::{ContentBlock, Message, MessageContent, Message
 use super::budget::{ContextBudget, ModelCapacity};
 use super::envelope::{AssembleStrategy, ContextLayer, MessageChunk};
 use super::error::AssembleError;
-use super::layer_promotion::{SoftLayerPromotionOptions, promote_soft_layers};
+use super::layer_promotion::{promote_soft_layers, SoftLayerPromotionOptions};
 use super::token_estimate::estimate_message_tokens;
 
 /// Options for deterministic context assembly (no LLM summarization).
@@ -435,9 +435,10 @@ mod tests {
             ..Default::default()
         };
         let report = MessageAssembler::assemble_layered(&chunks, &opts).unwrap();
-        let has_recent = report.messages.iter().any(|m| {
-            matches!(&m.content, MessageContent::Text(t) if t == "recent-turn")
-        });
+        let has_recent = report
+            .messages
+            .iter()
+            .any(|m| matches!(&m.content, MessageContent::Text(t) if t == "recent-turn"));
         assert!(has_recent);
     }
 
