@@ -3,6 +3,7 @@ use ai_lib_core::types::message::{ContentBlock, Message, MessageContent, Message
 use super::budget::{ContextBudget, ModelCapacity};
 use super::envelope::{AssembleStrategy, ContextLayer, MessageChunk};
 use super::error::AssembleError;
+use super::layer_promotion::{SoftLayerPromotionOptions, promote_soft_layers};
 use super::token_estimate::estimate_message_tokens;
 
 /// Options for deterministic context assembly (no LLM summarization).
@@ -33,6 +34,8 @@ pub struct LayeredAssembleOptions {
     pub strategy: AssembleStrategy,
     pub tool_fold_threshold_chars: usize,
     pub tool_placeholder: String,
+    /// Phase A soft-layer promotion (EOS-CX-LAYER23-001). Default off for stable semantics.
+    pub soft_layer_promotion: SoftLayerPromotionOptions,
 }
 
 impl Default for LayeredAssembleOptions {
@@ -42,6 +45,7 @@ impl Default for LayeredAssembleOptions {
             strategy: AssembleStrategy::Chat,
             tool_fold_threshold_chars: 8_192,
             tool_placeholder: "[tool output truncated]".to_string(),
+            soft_layer_promotion: SoftLayerPromotionOptions::disabled(),
         }
     }
 }
@@ -99,6 +103,9 @@ impl MessageAssembler {
         }
 
         let mut working: Vec<MessageChunk> = chunks.to_vec();
+        if options.soft_layer_promotion.is_enabled() {
+            promote_soft_layers(&mut working, options.soft_layer_promotion);
+        }
         let mut folded_tool_segments = 0usize;
         for chunk in &mut working {
             folded_tool_segments += fold_oversized_tool_content(
@@ -389,8 +396,49 @@ mod tests {
         LayeredAssembleOptions {
             budget: ContextBudget::new(budget, 0, 1),
             strategy,
+            soft_layer_promotion: SoftLayerPromotionOptions::disabled(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn assemble_layered_promotion_keeps_recent_pre_active_in_relevant_layer() {
+        let chunks = vec![
+            MessageChunk::new(ContextLayer::System, 0, Message::system("sys"), "s"),
+            MessageChunk::new(
+                ContextLayer::Background,
+                1,
+                Message::user("old-turn"),
+                "old",
+            ),
+            MessageChunk::new(
+                ContextLayer::Background,
+                2,
+                Message::assistant("old-reply"),
+                "old-a",
+            ),
+            MessageChunk::new(
+                ContextLayer::Background,
+                3,
+                Message::user("recent-turn"),
+                "recent",
+            ),
+            MessageChunk::new(ContextLayer::Active, 4, Message::user("now"), "act"),
+        ];
+        let opts = LayeredAssembleOptions {
+            budget: ContextBudget::new(10_000, 0, 1),
+            strategy: AssembleStrategy::Chat,
+            soft_layer_promotion: SoftLayerPromotionOptions {
+                recent_turns: 1,
+                tool_token_overlap_min: 0,
+            },
+            ..Default::default()
+        };
+        let report = MessageAssembler::assemble_layered(&chunks, &opts).unwrap();
+        let has_recent = report.messages.iter().any(|m| {
+            matches!(&m.content, MessageContent::Text(t) if t == "recent-turn")
+        });
+        assert!(has_recent);
     }
 
     #[test]
