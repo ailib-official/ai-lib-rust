@@ -10,6 +10,9 @@ use super::config::*;
 use super::error::ProtocolError;
 use super::metadata_model::{model_entry_from_extra, CapabilityKnown, MetadataModelEntry};
 use super::request::UnifiedRequest;
+use super::request_defaults::{
+    apply_request_defaults, request_defaults_from_extra, RequestDefaultsOptions,
+};
 
 /// Protocol manifest structure (parsed from YAML)
 ///
@@ -293,6 +296,17 @@ impl ProtocolManifest {
                 }
             }
         }
+
+        // Experimental (ALR-REQ-DEFAULTS-RUNTIME-001 / GOV-007): single apply entry
+        // after body assemble, before transport.
+        let owned_rd = request.request_defaults.as_ref();
+        let from_meta = request_defaults_from_extra(&self.extra, &request.model);
+        let rd = owned_rd.or(from_meta);
+        apply_request_defaults(
+            &mut provider_request,
+            &RequestDefaultsOptions::new(request.thinking_enabled.unwrap_or(true), rd)
+                .with_model_id(request.model.as_str()),
+        );
 
         Ok(provider_request)
     }

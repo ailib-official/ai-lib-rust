@@ -58,6 +58,8 @@ pub mod manifest;
 /// Experimental `metadata.models` capability facts (ME-001 / ALR-ME-001).
 pub mod metadata_model;
 pub mod request;
+/// Experimental `request_defaults` apply (ALR-REQ-DEFAULTS-RUNTIME-001 / GOV-007).
+pub mod request_defaults;
 pub mod schema;
 pub mod v2;
 pub mod validator;
@@ -75,6 +77,10 @@ pub use metadata_model::{
     ModelModalities,
 };
 pub use request::UnifiedRequest;
+pub use request_defaults::{
+    apply_request_defaults, max_tokens_cap_from_defaults, reasoning_effort_from_defaults,
+    request_defaults_from_extra, safe_input_tokens_from_defaults, RequestDefaultsOptions,
+};
 pub use schema::ProtocolSchema;
 pub use v2::{CapabilitiesV2, Capability, FeatureFlags, ManifestV2};
 pub use validator::ProtocolValidator;
