@@ -61,6 +61,8 @@ pub struct ChatRequestBuilder<'a> {
     pub(crate) model: Option<String>,
     /// JSON / structured output (`response_format` in provider request body).
     pub(crate) response_format: Option<crate::structured::JsonModeConfig>,
+    /// Experimental: host think toggle (`None` → think-on).
+    pub(crate) thinking_enabled: Option<bool>,
 }
 
 impl<'a> ChatRequestBuilder<'a> {
@@ -75,6 +77,7 @@ impl<'a> ChatRequestBuilder<'a> {
             tool_choice: None,
             model: None,
             response_format: None,
+            thinking_enabled: None,
         }
     }
 
@@ -149,6 +152,14 @@ impl<'a> ChatRequestBuilder<'a> {
     /// Enable structured output using JSON mode configuration (OpenAI-style `response_format`).
     pub fn response_format(mut self, cfg: crate::structured::JsonModeConfig) -> Self {
         self.response_format = Some(cfg);
+        self
+    }
+
+    /// Experimental: host think toggle for `request_defaults` dual-tier caps (GOV-007).
+    ///
+    /// When unset, compile treats thinking as enabled (`true`).
+    pub fn thinking_enabled(mut self, enabled: bool) -> Self {
+        self.thinking_enabled = Some(enabled);
         self
     }
 
@@ -382,6 +393,7 @@ impl<'a> ChatRequestBuilder<'a> {
                 tool_choice: unified_req.tool_choice.clone(),
                 model: Some(unified_req.model.clone()),
                 response_format: unified_req.response_format.clone(),
+                thinking_enabled: unified_req.thinking_enabled,
             };
             builder.execute_stream().await?
         };
@@ -467,6 +479,8 @@ impl<'a> ChatRequestBuilder<'a> {
             tools: self.tools,
             tool_choice: self.tool_choice,
             response_format: self.response_format,
+            thinking_enabled: self.thinking_enabled,
+            request_defaults: None,
         }
     }
 }

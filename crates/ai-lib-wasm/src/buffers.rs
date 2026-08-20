@@ -44,6 +44,8 @@ impl From<WasmChatRequest> for UnifiedRequest {
             tools: w.tools,
             tool_choice: w.tool_choice,
             response_format: None,
+            thinking_enabled: None,
+            request_defaults: None,
         }
     }
 }

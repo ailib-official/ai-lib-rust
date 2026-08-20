@@ -19,4 +19,8 @@ pub struct UnifiedRequest {
     pub tool_choice: Option<serde_json::Value>,
     /// JSON mode configuration for structured output
     pub response_format: Option<crate::structured::JsonModeConfig>,
+    /// Experimental: host think toggle. `None` → treat as think-on (`true`).
+    pub thinking_enabled: Option<bool>,
+    /// Experimental: override `request_defaults` (else from manifest `metadata.models`).
+    pub request_defaults: Option<serde_json::Value>,
 }

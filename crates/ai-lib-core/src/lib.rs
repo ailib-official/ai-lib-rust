@@ -77,6 +77,12 @@ pub use types::think_dialect::{
     is_think_dialect_name, split_think_blocks, strip_think_dialects, ThinkSplit,
 };
 
+/// Experimental `request_defaults` apply (ALR-REQ-DEFAULTS-RUNTIME-001 / GOV-007).
+pub use protocol::{
+    apply_request_defaults, max_tokens_cap_from_defaults, reasoning_effort_from_defaults,
+    request_defaults_from_extra, safe_input_tokens_from_defaults, RequestDefaultsOptions,
+};
+
 #[cfg(not(target_arch = "wasm32"))]
 use futures::Stream;
 #[cfg(not(target_arch = "wasm32"))]
