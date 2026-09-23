@@ -71,19 +71,32 @@ impl ProtocolLoader {
         let provider = parts[0];
         let model_name = parts[1..].join("/");
 
-        // First, try to load model registry to get provider reference.
-        // Prefer the full logical id as registry key (e.g. nvidia/nemotron-mini-…),
-        // then the stripped remainder (e.g. meta/llama-…). If neither is registered
-        // (common for some providers), fall back to the provider segment.
+        // Prefer the full logical id, then the provider named by the first
+        // segment. A stripped catalog key is only a fallback when that
+        // provider file does not exist. Otherwise `groq/openai/gpt-oss-20b`
+        // would load NVIDIA, because nvidia.yaml also registers
+        // `openai/gpt-oss-20b`.
         let manifest = match self.load_model_config(model).await {
             Ok(model_config) => self.load_provider(&model_config.provider).await?,
-            Err(ProtocolError::NotFound { .. }) => {
-                match self.load_model_config(&model_name).await {
-                    Ok(model_config) => self.load_provider(&model_config.provider).await?,
-                    Err(ProtocolError::NotFound { .. }) => self.load_provider(provider).await?,
-                    Err(e) => return Err(e),
+            Err(ProtocolError::NotFound { .. }) => match self.load_provider(provider).await {
+                Ok(manifest) => manifest,
+                Err(ProtocolError::NotFound { .. }) => {
+                    match self.load_model_config(&model_name).await {
+                        Ok(model_config) => self.load_provider(&model_config.provider).await?,
+                        Err(ProtocolError::NotFound { .. }) => {
+                            return Err(ProtocolError::NotFound {
+                                id: model.to_string(),
+                                hint: Some(
+                                    "No provider manifest for the id prefix, and the remainder is not in the model registry"
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
-            }
+                Err(e) => return Err(e),
+            },
             Err(e) => return Err(e),
         };
 
@@ -115,11 +128,25 @@ impl ProtocolLoader {
             trimmed.to_string()
         };
 
+        let prefix_provider_exists = if parts.len() >= 2 {
+            self.load_provider(parts[0]).await.is_ok()
+        } else {
+            false
+        };
+
         for key in [trimmed, stripped.as_str()] {
             if key.is_empty() {
                 continue;
             }
             if let Ok(cfg) = self.load_model_config(key).await {
+                // A stripped key owned by another vendor must not replace the
+                // wire id of an explicit provider prefix.
+                if key != trimmed
+                    && prefix_provider_exists
+                    && !cfg.provider.eq_ignore_ascii_case(parts[0])
+                {
+                    continue;
+                }
                 if let Some(id) = cfg.model_id.filter(|s| !s.trim().is_empty()) {
                     return id;
                 }
@@ -934,5 +961,33 @@ mod identity_alias_tests {
             .await
             .expect("glm alias should resolve to zhipu");
         assert_eq!(zhipu.id, "zhipu");
+    }
+
+    #[tokio::test]
+    async fn explicit_provider_prefix_beats_foreign_catalog_key() {
+        let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ai-protocol");
+        if !root.join("v1/providers/groq.yaml").is_file() {
+            if let Ok(dir) = std::env::var("AI_PROTOCOL_DIR") {
+                root = PathBuf::from(dir);
+            }
+        }
+        if !root.join("v1/providers/groq.yaml").is_file() {
+            return;
+        }
+        let loader = ProtocolLoader::new().with_base_path(&root);
+        let manifest = loader
+            .load_model("groq/openai/gpt-oss-20b")
+            .await
+            .expect("groq logical id");
+        assert_eq!(manifest.id, "groq");
+        assert!(
+            manifest.get_base_url().contains("api.groq.com"),
+            "base {}",
+            manifest.get_base_url()
+        );
+        let wire = loader
+            .resolve_wire_model_id("groq/openai/gpt-oss-20b")
+            .await;
+        assert_eq!(wire, "openai/gpt-oss-20b");
     }
 }
